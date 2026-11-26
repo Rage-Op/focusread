@@ -1007,26 +1007,38 @@ class FocusReadApp {
     analyzeTextStructure(paragraphs) {
         const structure = [];
         
+        const chapterPattern = /^(chapter|part|section|book|act|scene|prologue|epilogue|introduction|preface|appendix)\s*([\divxlc]+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|[a-z]+teen|twenty|thirty|forty|fifty)?\.?:?\s*$/i;
+        const chapterPatternAlt = /^(chapter|part|section)\s+.{1,30}$/i;
+        const romanNumeral = /^[IVXLC]+\.?\s*$/;
+        const numberOnly = /^\d+\.?\s*$/;
+        
         for (let i = 0; i < paragraphs.length; i++) {
             const text = paragraphs[i].trim();
+            const nextPara = i + 1 < paragraphs.length ? paragraphs[i + 1]?.trim() : '';
             const info = { type: 'paragraph' };
             
-            if (/^(chapter|part|section|book|act|scene)\s+(\d+|[ivxlc]+)/i.test(text)) {
+            if (chapterPattern.test(text) || chapterPatternAlt.test(text)) {
                 info.type = 'heading';
                 info.headingLevel = 1;
+                info.isBold = true;
+            } else if (romanNumeral.test(text) && text.length <= 10) {
+                info.type = 'heading';
+                info.headingLevel = 2;
                 info.isBold = true;
             } else if (/^(\d+\.|\d+\)|\*|•|–|—|-)\s/.test(text)) {
                 info.type = 'list';
             } else if (text.length < 80 && text.length > 0 && 
-                       text === text.toUpperCase() && /[A-Z]/.test(text)) {
+                       text === text.toUpperCase() && /[A-Z]/.test(text) && 
+                       !/[.!?]$/.test(text)) {
                 info.type = 'heading';
                 info.headingLevel = 2;
                 info.isBold = true;
-            } else if (text.length < 60 && text.length > 0 && 
+            } else if (text.length < 50 && text.length > 0 && 
                        !text.endsWith('.') && !text.endsWith(',') && 
-                       !text.endsWith('?') && !text.endsWith('!')) {
-                const wordCount = text.split(/\s+/).length;
-                if (wordCount <= 10) {
+                       !text.endsWith('?') && !text.endsWith('!') &&
+                       text.split(/\s+/).length <= 8) {
+                const hasGapAfter = nextPara === '' || (nextPara.length > 100);
+                if (hasGapAfter || /^[A-Z][^a-z]*$/.test(text)) {
                     info.type = 'heading';
                     info.headingLevel = 3;
                 }
@@ -1047,13 +1059,25 @@ class FocusReadApp {
         const localPin = this.pin.getPinData();
         
         if (localPin) {
-            const result = await this.firebase.syncPin(
-                localPin.hash,
-                localPin.salt,
-                localPin.changedAt || 0
-            );
+            const cloudPin = await this.firebase.getPinFromCloud();
             
-            if (result?.conflict) {
+            if (!cloudPin) {
+                await this.firebase.savePinToCloud(localPin.hash, localPin.salt, localPin.changedAt || Date.now());
+                return;
+            }
+            
+            if (cloudPin.hash === localPin.hash) {
+                return;
+            }
+            
+            const cloudChangedAt = cloudPin.changedAt || 0;
+            const localChangedAt = localPin.changedAt || 0;
+            
+            if (cloudChangedAt > localChangedAt) {
+                this.pin.setPinData(cloudPin.hash, cloudPin.salt, cloudChangedAt);
+            } else if (localChangedAt > cloudChangedAt) {
+                await this.firebase.savePinToCloud(localPin.hash, localPin.salt, localChangedAt);
+            } else {
                 const useCloud = confirm(
                     'PIN Conflict Detected\n\n' +
                     'Your local PIN differs from the cloud PIN.\n\n' +
@@ -1062,14 +1086,12 @@ class FocusReadApp {
                 );
                 
                 if (useCloud) {
-                    this.pin.setPinData(result.cloudHash, result.cloudSalt, result.cloudChangedAt);
+                    this.pin.setPinData(cloudPin.hash, cloudPin.salt, cloudChangedAt || Date.now());
                 } else {
-                    const changedAt = Date.now();
-                    this.pin.setPinData(localPin.hash, localPin.salt, changedAt);
-                    await this.firebase.savePinToCloud(localPin.hash, localPin.salt, changedAt);
+                    const newChangedAt = Date.now();
+                    this.pin.setPinData(localPin.hash, localPin.salt, newChangedAt);
+                    await this.firebase.savePinToCloud(localPin.hash, localPin.salt, newChangedAt);
                 }
-            } else if (result?.fromCloud && result.hash !== localPin.hash) {
-                this.pin.setPinData(result.hash, result.salt, result.changedAt || Date.now());
             }
         } else {
             const cloudPin = await this.firebase.getPinFromCloud();
@@ -1088,15 +1110,53 @@ class FocusReadApp {
     async mergeLibraries() {
         if (!this.firebase.isSignedIn()) return;
         
+        const autoUpload = this.settings.get('autoCloudUpload') !== false;
+        
         const localBooks = await this.storage.getAllBooks();
         const cloudBooks = await this.firebase.getCloudBooks();
         
-        const cloudBookIds = new Set(cloudBooks.map(b => b.id));
+        const cloudBookMap = new Map(cloudBooks.map(b => [b.id, b]));
         const localBookIds = new Set(localBooks.map(b => b.id));
         
         for (const localBook of localBooks) {
-            if (!cloudBookIds.has(localBook.id)) {
-                await this.firebase.uploadBook(localBook);
+            const cloudBook = cloudBookMap.get(localBook.id);
+            
+            if (!cloudBook) {
+                if (autoUpload) {
+                    const fullBook = await this.storage.getBook(localBook.id);
+                    if (fullBook) {
+                        await this.firebase.uploadBook(fullBook);
+                        fullBook.isCloud = true;
+                        await this.storage.updateBook(fullBook);
+                        
+                        const highlights = await this.storage.getBookHighlights(localBook.id);
+                        if (highlights && highlights.items?.length > 0) {
+                            await this.firebase.syncHighlights(localBook.id, highlights);
+                        }
+                    }
+                }
+            } else {
+                const localUpdatedAt = localBook.updatedAt || localBook.createdAt || 0;
+                const cloudUpdatedAt = cloudBook.updatedAt?.toMillis?.() || cloudBook.updatedAt || 0;
+                
+                if (localUpdatedAt > cloudUpdatedAt && autoUpload) {
+                    const fullBook = await this.storage.getBook(localBook.id);
+                    if (fullBook) {
+                        await this.firebase.uploadBook(fullBook);
+                        
+                        const highlights = await this.storage.getBookHighlights(localBook.id);
+                        if (highlights && highlights.items?.length > 0) {
+                            await this.firebase.syncHighlights(localBook.id, highlights);
+                        }
+                    }
+                } else if (cloudUpdatedAt > localUpdatedAt) {
+                    const fullBook = await this.storage.getBook(localBook.id);
+                    if (fullBook && cloudBook.position !== undefined) {
+                        fullBook.position = cloudBook.position;
+                        fullBook.progressPercent = cloudBook.progressPercent;
+                        await this.storage.updateBook(fullBook);
+                    }
+                }
             }
         }
         
@@ -1104,16 +1164,8 @@ class FocusReadApp {
             if (!localBookIds.has(cloudBook.id)) {
                 const fullBook = await this.firebase.downloadBook(cloudBook.id, cloudBook.title);
                 if (fullBook) {
+                    fullBook.isCloud = true;
                     await this.storage.saveBook(fullBook);
-                }
-            } else {
-                const localBook = localBooks.find(b => b.id === cloudBook.id);
-                const localUpdatedAt = localBook.updatedAt || localBook.createdAt || 0;
-                const cloudUpdatedAt = cloudBook.updatedAt?.toMillis?.() || cloudBook.updatedAt || 0;
-                
-                if (cloudUpdatedAt > localUpdatedAt && cloudBook.position !== undefined) {
-                    localBook.position = cloudBook.position;
-                    await this.storage.updateBook(localBook);
                 }
             }
         }
@@ -1168,7 +1220,13 @@ class FocusReadApp {
         
         document.getElementById('lock-btn').addEventListener('click', () => this.lock());
         document.getElementById('reload-btn').addEventListener('click', () => this.reloadApp());
-        document.getElementById('change-pin-btn')?.addEventListener('click', () => this.startChangePIN());
+        
+        document.addEventListener('click', (e) => {
+            if (e.target.closest('#change-pin-btn')) {
+                e.preventDefault();
+                this.startChangePIN();
+            }
+        });
         
         document.getElementById('back-to-library').addEventListener('click', () => this.showView('library'));
         
@@ -1418,7 +1476,7 @@ class FocusReadApp {
                     </svg>
                     Rename book
                 </button>
-                <button class="book-menu-item" role="menuitem" data-action="reformat" style="${!book.structure || book.structure.length === 0 ? '' : 'display:none'}">
+                <button class="book-menu-item" role="menuitem" data-action="reformat">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M4 7V4h16v3M9 20h6M12 4v16"/>
                     </svg>

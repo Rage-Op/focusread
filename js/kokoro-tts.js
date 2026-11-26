@@ -43,6 +43,7 @@ export class KokoroTTS {
         this.fallbackReason = null;
         
         this.currentVoice = DEFAULT_VOICE;
+        this.savedSystemVoice = null;
         this.speed = 1.0;
         this.volume = 1.0;
         
@@ -642,10 +643,19 @@ export class KokoroTTS {
         this.webSpeechUtterance.rate = this.speed;
         this.webSpeechUtterance.volume = this.volume;
         
-        const selectedVoice = voices.find(v => v.name === this.currentVoice) || voices[0];
+        const englishVoices = voices.filter(v => v.lang.startsWith('en'));
+        let selectedVoice = englishVoices.find(v => v.name === this.currentVoice) 
+            || englishVoices.find(v => v.name === this.savedSystemVoice)
+            || englishVoices.find(v => v.lang === 'en-US')
+            || englishVoices.find(v => v.lang.startsWith('en'))
+            || englishVoices[0]
+            || voices.find(v => v.lang.startsWith('en'))
+            || voices[0];
+        
         if (selectedVoice) {
             this.webSpeechUtterance.voice = selectedVoice;
             this.currentSystemVoiceName = selectedVoice.name;
+            this.savedSystemVoice = selectedVoice.name;
         }
         
         this.updateWebSpeechTime();
@@ -800,6 +810,9 @@ export class KokoroTTS {
     
     setVoice(voiceId) {
         this.currentVoice = voiceId;
+        if (this.useSystemVoices || this.forceSystemVoices) {
+            this.savedSystemVoice = voiceId;
+        }
     }
     
     setSpeed(speed) {

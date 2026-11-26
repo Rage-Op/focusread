@@ -314,8 +314,14 @@ export class PDFHandler {
         if (text.length > 200) return false;
         if (text.length < 2) return false;
         
+        const chapterPattern = /^(chapter|part|section|book|act|scene|prologue|epilogue|introduction|preface|conclusion|appendix)\s*[\divxlc]*(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|[a-z]+teen|twenty|thirty|forty|fifty)?\.?:?\s*$/i;
+        const chapterPatternAlt = /^(chapter|part|section)\s+.{1,30}$/i;
+        
+        if (chapterPattern.test(text)) return 'h1';
+        if (chapterPatternAlt.test(text) && text.length < 60) return 'h1';
+        
         const endsWithPunctuation = /[.,:;]$/.test(text);
-        if (endsWithPunctuation && !text.match(/^(chapter|part|section|introduction|conclusion)/i)) {
+        if (endsWithPunctuation && !chapterPattern.test(text)) {
             return false;
         }
         
@@ -326,6 +332,7 @@ export class PDFHandler {
         if (/^(chapter|part)\s+[\dIVXLCM]+/i.test(text)) return 'h1';
         if (/^(section|article)\s+[\d\.]+/i.test(text)) return 'h2';
         if (/^[\dIVXLCM]+\.\s+[A-Z]/.test(text) && text.length < 80) return 'h2';
+        if (/^[IVXLC]+\.?\s*$/i.test(text) && text.length <= 10) return 'h2';
         
         return false;
     }
