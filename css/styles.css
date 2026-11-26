@@ -114,6 +114,18 @@
 html {
     font-size: 16px;
     scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+}
+
+/* Touch device optimizations */
+button, 
+input, 
+select, 
+textarea,
+[role="button"],
+.book-card {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
 }
 
 body {
@@ -221,6 +233,9 @@ body {
     gap: var(--spacing-sm);
     max-width: 280px;
     margin: 0 auto;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .pin-key {
@@ -233,19 +248,25 @@ body {
     font-size: 1.5rem;
     font-weight: 600;
     cursor: pointer;
-    transition: all var(--transition-fast);
+    transition: background var(--transition-fast);
     display: flex;
     align-items: center;
     justify-content: center;
     margin: 0 auto;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
 }
 
 .pin-key:hover {
     background: var(--bg-tertiary);
-    transform: scale(1.05);
 }
 
-.pin-key:active {
+.pin-key:active,
+.pin-key.pressed {
+    background: var(--bg-tertiary);
     transform: scale(0.95);
 }
 
@@ -255,7 +276,9 @@ body {
     color: var(--text-secondary);
 }
 
-.pin-key-action:hover {
+.pin-key-action:hover,
+.pin-key-action:active,
+.pin-key-action.pressed {
     background: var(--bg-secondary);
     color: var(--accent);
 }
@@ -488,13 +511,21 @@ body {
     border-radius: 12px;
     padding: var(--spacing-md);
     cursor: pointer;
-    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    transition: box-shadow var(--transition-fast);
     position: relative;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 .book-card:hover {
-    transform: translateY(-4px);
     box-shadow: 0 8px 24px var(--shadow);
+}
+
+.book-card:active,
+.book-card.pressed {
+    background: var(--bg-tertiary);
 }
 
 .book-cover {
@@ -508,6 +539,7 @@ body {
     font-size: 3rem;
     margin-bottom: var(--spacing-sm);
     color: white;
+    pointer-events: none;
 }
 
 .book-title {
@@ -517,38 +549,96 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
     margin-bottom: var(--spacing-xs);
+    pointer-events: none;
 }
 
 .book-progress {
     font-size: 0.8rem;
     color: var(--text-muted);
+    pointer-events: none;
 }
 
-.book-delete {
+.book-menu-btn {
     position: absolute;
-    top: var(--spacing-sm);
-    right: var(--spacing-sm);
-    width: 32px;
-    height: 32px;
+    top: var(--spacing-xs);
+    right: var(--spacing-xs);
+    width: 44px;
+    height: 44px;
     border: none;
-    border-radius: 50%;
-    background: var(--error);
-    color: white;
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
     cursor: pointer;
-    opacity: 0;
-    transition: opacity var(--transition-fast);
     display: flex;
     align-items: center;
     justify-content: center;
+    opacity: 0.85;
+    transition: opacity var(--transition-fast), background var(--transition-fast);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    z-index: 2;
+    box-shadow: 0 1px 3px var(--shadow);
 }
 
-.book-card:hover .book-delete {
+.book-menu-btn:hover,
+.book-menu-btn:active {
     opacity: 1;
+    background: var(--bg-tertiary);
 }
 
-.book-delete svg {
+.book-menu-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+.book-menu {
+    position: absolute;
+    top: 48px;
+    right: var(--spacing-xs);
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px var(--shadow);
+    z-index: 10;
+    display: none;
+    min-width: 150px;
+    overflow: hidden;
+}
+
+.book-menu.open {
+    display: block;
+}
+
+.book-menu-item {
+    width: 100%;
+    padding: var(--spacing-md);
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 1rem;
+    text-align: left;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    transition: background var(--transition-fast);
+    touch-action: manipulation;
+    min-height: 48px;
+}
+
+.book-menu-item:hover,
+.book-menu-item:active {
+    background: var(--bg-secondary);
+}
+
+.book-menu-item.danger {
+    color: var(--error);
+}
+
+.book-menu-item svg {
     width: 16px;
     height: 16px;
+    flex-shrink: 0;
 }
 
 /* ============================================
@@ -1386,14 +1476,302 @@ input[type="range"]::-moz-range-thumb {
 
 @media (max-width: 480px) {
     .pin-key {
-        width: 60px;
-        height: 60px;
-        font-size: 1.3rem;
+        width: 64px;
+        height: 64px;
+        font-size: 1.4rem;
     }
     
     .header-right .icon-btn:not(#settings-btn):not(#lock-btn) {
         display: none;
     }
+}
+
+/* Ensure inputs are 16px+ to prevent iOS auto-zoom */
+input, select, textarea {
+    font-size: 16px;
+}
+
+input[type="range"] {
+    font-size: inherit;
+}
+
+#search-input {
+    font-size: 16px;
+}
+
+/* ============================================
+   CLOUD SYNC UI
+   ============================================ */
+.sidebar-section {
+    padding: var(--spacing-md);
+    border-top: 1px solid var(--border);
+    margin-top: auto;
+}
+
+.sidebar-section h3 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-sm);
+}
+
+.cloud-status {
+    font-size: 0.9rem;
+}
+
+.cloud-status p {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+}
+
+.cloud-btn {
+    width: 100%;
+    justify-content: center;
+}
+
+.cloud-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+.user-info {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+    margin-bottom: var(--spacing-sm);
+}
+
+.user-email {
+    font-size: 0.85rem;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.sync-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: 0.8rem;
+}
+
+.sync-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+}
+
+.sync-indicator[data-status="syncing"] .sync-dot {
+    background: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+.sync-indicator[data-status="error"] .sync-dot {
+    background: var(--error);
+}
+
+.sync-indicator[data-status="idle"] .sync-text::after {
+    content: "Synced";
+}
+
+.sync-indicator[data-status="syncing"] .sync-text::after {
+    content: "Syncing...";
+}
+
+.sync-indicator[data-status="error"] .sync-text::after {
+    content: "Sync error";
+}
+
+.sync-text {
+    color: var(--text-muted);
+}
+
+.sync-text::after {
+    content: "";
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.cloud-actions {
+    display: flex;
+    gap: var(--spacing-xs);
+}
+
+.cloud-actions button {
+    flex: 1;
+    font-size: 0.8rem;
+    padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+/* Sign In Modal */
+.signin-modal-content {
+    max-width: 380px;
+    text-align: center;
+}
+
+.modal-close {
+    position: absolute;
+    top: var(--spacing-sm);
+    right: var(--spacing-sm);
+}
+
+.signin-subtitle {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-lg);
+}
+
+.signin-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+}
+
+.signin-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    width: 100%;
+    padding: var(--spacing-md);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    touch-action: manipulation;
+}
+
+.google-btn {
+    background: white;
+    color: #333;
+}
+
+.google-btn:hover {
+    background: #f5f5f5;
+}
+
+.email-btn {
+    background: var(--accent);
+    color: white;
+    border-color: var(--accent);
+}
+
+.email-btn:hover {
+    background: var(--accent-hover);
+}
+
+.signin-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    color: var(--text-muted);
+    font-size: 0.85rem;
+}
+
+.signin-divider::before,
+.signin-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.email-signin-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+}
+
+.email-signin-form input {
+    padding: var(--spacing-md);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 16px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.signin-note {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.signin-error {
+    color: var(--error);
+    font-size: 0.85rem;
+    margin-top: var(--spacing-sm);
+    min-height: 1.2em;
+}
+
+/* Delete Modal */
+.delete-modal-content {
+    max-width: 400px;
+    text-align: center;
+}
+
+.delete-book-name {
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-lg);
+    font-style: italic;
+}
+
+.delete-options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.delete-option-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-md);
+    text-align: left;
+    min-height: 48px;
+}
+
+.delete-option-btn svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.delete-option-btn.danger {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+.delete-option-btn.danger:hover {
+    background: var(--error);
+    color: white;
+}
+
+/* Cloud badge on book cards */
+.book-cloud-badge {
+    position: absolute;
+    bottom: var(--spacing-xs);
+    right: var(--spacing-xs);
+    width: 24px;
+    height: 24px;
+    background: var(--accent);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+}
+
+.book-cloud-badge svg {
+    width: 14px;
+    height: 14px;
 }
 
 /* Print styles */
