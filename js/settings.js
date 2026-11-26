@@ -26,6 +26,9 @@ export class SettingsManager {
             reducedMotion: false,
             ttsVoice: '',
             ttsRate: 1,
+            ttsKokoroVoice: 'af_heart',
+            ttsKokoroSpeed: 1,
+            ttsForceSystem: false,
             rsvpSpeed: 300
         };
     }
@@ -183,14 +186,12 @@ export class SettingsManager {
             this.set('reducedMotion', e.target.checked);
         });
         
-        document.getElementById('tts-voice').addEventListener('change', (e) => {
-            this.set('ttsVoice', e.target.value);
-        });
-        
-        document.getElementById('tts-rate').addEventListener('input', (e) => {
-            const value = parseFloat(e.target.value);
-            document.getElementById('tts-rate-value').textContent = `${value.toFixed(1)}x`;
-            this.set('ttsRate', value);
+        document.getElementById('tts-force-system')?.addEventListener('change', (e) => {
+            this.set('ttsForceSystem', e.target.checked);
+            if (window.app?.kokoroTTS) {
+                window.app.kokoroTTS.setForceSystemVoices(e.target.checked);
+                window.app.populateTTSVoices();
+            }
         });
         
         document.getElementById('reset-settings').addEventListener('click', () => {
@@ -237,9 +238,10 @@ export class SettingsManager {
         document.getElementById('high-contrast').checked = this.settings.highContrast;
         document.getElementById('reduced-motion').checked = this.settings.reducedMotion;
         
-        document.getElementById('tts-voice').value = this.settings.ttsVoice;
-        document.getElementById('tts-rate').value = this.settings.ttsRate;
-        document.getElementById('tts-rate-value').textContent = `${this.settings.ttsRate.toFixed(1)}x`;
+        const forceSystemEl = document.getElementById('tts-force-system');
+        if (forceSystemEl) {
+            forceSystemEl.checked = this.settings.ttsForceSystem;
+        }
     }
     
     updateThemeButtons() {

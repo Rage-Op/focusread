@@ -12,6 +12,7 @@ import { TTSManager } from './tts.js';
 import { SettingsManager } from './settings.js';
 import { SearchManager } from './search.js';
 import { FirebaseSync } from './firebase-sync.js';
+import { KokoroTTS } from './kokoro-tts.js';
 
 class FocusReadApp {
     constructor() {
@@ -22,6 +23,7 @@ class FocusReadApp {
         this.bionic = new BionicReader();
         this.rsvp = null;
         this.tts = new TTSManager();
+        this.kokoroTTS = new KokoroTTS();
         this.search = new SearchManager();
         this.firebase = new FirebaseSync();
         
@@ -52,6 +54,217 @@ class FocusReadApp {
         }
         
         await this.initFirebase();
+        this.initKokoroTTS();
+    }
+    
+    initKokoroTTS() {
+        this.kokoroTTS.currentVoice = this.settings.get('ttsKokoroVoice') || 'af_heart';
+        this.kokoroTTS.speed = this.settings.get('ttsKokoroSpeed') || 1.0;
+        this.kokoroTTS.forceSystemVoices = this.settings.get('ttsForceSystem') || false;
+        
+        this.kokoroTTS.onPlayStateChange = (playing) => {
+            this.updateTTSPlayButton(playing);
+            if (playing) {
+                document.body.classList.add('tts-active');
+            }
+        };
+        
+        this.kokoroTTS.onParagraphChange = (index) => {
+            this.highlightReadingParagraph(index);
+            this.scrollToParagraphSmooth(index);
+        };
+        
+        this.kokoroTTS.onSentenceChange = (index, text) => {
+            this.highlightSentence(text);
+        };
+        
+        this.kokoroTTS.onTimeUpdate = (elapsed, total) => {
+            this.updateTTSTime(elapsed, total);
+        };
+        
+        this.kokoroTTS.onLoadProgress = (percent, message) => {
+            const overlay = document.getElementById('tts-loading-overlay');
+            const bar = document.getElementById('tts-loading-bar');
+            const text = document.getElementById('tts-loading-text');
+            
+            if (percent < 100) {
+                overlay.style.display = '';
+                bar.style.width = `${percent}%`;
+                text.textContent = message;
+            } else {
+                overlay.style.display = 'none';
+            }
+        };
+        
+        this.kokoroTTS.onEngineChange = (engine) => {
+            this.updateTTSEngineIndicator(engine);
+            this.populateTTSVoices();
+        };
+        
+        this.bindTTSControls();
+        this.populateTTSVoices();
+    }
+    
+    bindTTSControls() {
+        const playBtn = document.getElementById('tts-play-pause');
+        const prevBtn = document.getElementById('tts-prev');
+        const nextBtn = document.getElementById('tts-next');
+        const closeBtn = document.getElementById('tts-close');
+        const speedSelect = document.getElementById('tts-speed-select');
+        const voiceSelect = document.getElementById('tts-voice-select');
+        
+        playBtn?.addEventListener('click', () => {
+            if (this.kokoroTTS.isPaused) {
+                this.kokoroTTS.play();
+            } else if (this.kokoroTTS.isPlaying) {
+                this.kokoroTTS.pause();
+            }
+        });
+        
+        prevBtn?.addEventListener('click', () => {
+            this.kokoroTTS.previousParagraph();
+        });
+        
+        nextBtn?.addEventListener('click', () => {
+            this.kokoroTTS.nextParagraph();
+        });
+        
+        closeBtn?.addEventListener('click', () => {
+            this.stopKokoroTTS();
+        });
+        
+        speedSelect?.addEventListener('change', (e) => {
+            const speed = parseFloat(e.target.value);
+            this.kokoroTTS.setSpeed(speed);
+            this.settings.set('ttsKokoroSpeed', speed);
+        });
+        
+        voiceSelect?.addEventListener('change', (e) => {
+            this.kokoroTTS.setVoice(e.target.value);
+            this.settings.set('ttsKokoroVoice', e.target.value);
+        });
+        
+        speedSelect.value = this.kokoroTTS.speed;
+    }
+    
+    populateTTSVoices() {
+        const select = document.getElementById('tts-voice-select');
+        if (!select) return;
+        
+        const voices = this.kokoroTTS.getVoices();
+        const currentVoice = this.kokoroTTS.currentVoice;
+        
+        select.innerHTML = voices.map(v => 
+            `<option value="${v.id}" ${v.id === currentVoice ? 'selected' : ''}>${v.name}</option>`
+        ).join('');
+        
+        if (this.kokoroTTS.useSystemVoices && voices.length === 0) {
+            setTimeout(() => this.populateTTSVoices(), 100);
+        }
+    }
+    
+    updateTTSPlayButton(playing) {
+        const playIcon = document.querySelector('.tts-icon-play');
+        const pauseIcon = document.querySelector('.tts-icon-pause');
+        const btn = document.getElementById('tts-play-pause');
+        
+        if (playing && !this.kokoroTTS.isPaused) {
+            playIcon.style.display = 'none';
+            pauseIcon.style.display = '';
+            btn?.setAttribute('aria-label', 'Pause');
+        } else {
+            playIcon.style.display = '';
+            pauseIcon.style.display = 'none';
+            btn?.setAttribute('aria-label', 'Play');
+        }
+    }
+    
+    updateTTSTime(elapsed, total) {
+        const elapsedEl = document.getElementById('tts-elapsed');
+        const durationEl = document.getElementById('tts-duration');
+        const seekBar = document.getElementById('tts-seek');
+        
+        const formatTime = (s) => {
+            const mins = Math.floor(s / 60);
+            const secs = Math.floor(s % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        };
+        
+        if (elapsedEl) elapsedEl.textContent = formatTime(elapsed);
+        if (durationEl) durationEl.textContent = formatTime(total);
+        if (seekBar && total > 0) {
+            seekBar.value = (elapsed / total) * 100;
+        }
+    }
+    
+    updateTTSEngineIndicator(engine) {
+        const indicator = document.getElementById('tts-engine-indicator');
+        const nameEl = indicator?.querySelector('.engine-name');
+        
+        if (indicator) {
+            indicator.setAttribute('data-engine', engine);
+        }
+        if (nameEl) {
+            nameEl.textContent = engine === 'kokoro' ? 'Kokoro' : 'System';
+        }
+    }
+    
+    highlightReadingParagraph(index) {
+        document.querySelectorAll('.paragraph-text.reading').forEach(el => {
+            el.classList.remove('reading');
+        });
+        
+        const wrapper = document.querySelector(`[data-paragraph="${index}"] .paragraph-text`);
+        if (wrapper) {
+            wrapper.classList.add('reading');
+        }
+    }
+    
+    highlightSentence(sentenceText) {
+        document.querySelectorAll('.sentence-highlight').forEach(el => {
+            el.outerHTML = el.innerHTML;
+        });
+        
+        const readingPara = document.querySelector('.paragraph-text.reading');
+        if (readingPara && sentenceText) {
+            const escaped = sentenceText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escaped})`, 'i');
+            const html = readingPara.innerHTML;
+            if (!html.includes('sentence-highlight')) {
+                readingPara.innerHTML = html.replace(regex, '<span class="sentence-highlight">$1</span>');
+            }
+        }
+    }
+    
+    scrollToParagraphSmooth(index) {
+        const wrapper = document.querySelector(`[data-paragraph="${index}"]`);
+        if (wrapper) {
+            wrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+    
+    async startKokoroTTSFromParagraph(index) {
+        const bar = document.getElementById('tts-playback-bar');
+        bar?.classList.add('visible');
+        bar?.setAttribute('aria-hidden', 'false');
+        
+        await this.kokoroTTS.startFromParagraph(index, this.paragraphs);
+    }
+    
+    stopKokoroTTS() {
+        this.kokoroTTS.stop();
+        
+        const bar = document.getElementById('tts-playback-bar');
+        bar?.classList.remove('visible');
+        bar?.setAttribute('aria-hidden', 'true');
+        document.body.classList.remove('tts-active');
+        
+        document.querySelectorAll('.paragraph-text.reading').forEach(el => {
+            el.classList.remove('reading');
+        });
+        document.querySelectorAll('.sentence-highlight').forEach(el => {
+            el.outerHTML = el.innerHTML;
+        });
     }
     
     async initFirebase() {
@@ -303,6 +516,7 @@ class FocusReadApp {
         document.getElementById('settings-overlay').addEventListener('click', () => this.toggleSettings(false));
         
         document.getElementById('lock-btn').addEventListener('click', () => this.lock());
+        document.getElementById('reload-btn').addEventListener('click', () => this.reloadApp());
         
         document.getElementById('back-to-library').addEventListener('click', () => this.showView('library'));
         
@@ -384,9 +598,44 @@ class FocusReadApp {
     lock() {
         this.isLocked = true;
         this.tts.stop();
+        this.stopKokoroTTS();
         if (this.rsvp) this.rsvp.stop();
         this.saveReadingPosition();
         this.showPinScreen('unlock');
+    }
+    
+    async reloadApp() {
+        const reloadBtn = document.getElementById('reload-btn');
+        reloadBtn.disabled = true;
+        reloadBtn.style.opacity = '0.5';
+        
+        try {
+            if ('serviceWorker' in navigator) {
+                const registration = await navigator.serviceWorker.getRegistration();
+                if (registration?.waiting) {
+                    registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+            
+            if ('caches' in window) {
+                const cacheNames = await caches.keys();
+                const appCaches = cacheNames.filter(name => 
+                    name.startsWith('focusread-v') && 
+                    !name.includes('kokoro-model')
+                );
+                
+                for (const cacheName of appCaches) {
+                    await caches.delete(cacheName);
+                }
+            }
+            
+            location.reload();
+            
+        } catch (error) {
+            console.error('Reload error:', error);
+            location.reload();
+        }
     }
     
     async loadLibrary() {
@@ -608,8 +857,26 @@ class FocusReadApp {
         container.innerHTML = '';
         
         this.paragraphs.forEach((paragraph, index) => {
-            const p = document.createElement('p');
-            p.setAttribute('data-paragraph', index);
+            const wrapper = document.createElement('div');
+            wrapper.className = 'paragraph-wrapper';
+            wrapper.setAttribute('data-paragraph', index);
+            
+            const speakerBtn = document.createElement('button');
+            speakerBtn.className = 'paragraph-speaker';
+            speakerBtn.setAttribute('aria-label', `Read paragraph ${index + 1} aloud`);
+            speakerBtn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                </svg>
+            `;
+            
+            this.bindTapEvent(speakerBtn, (e) => {
+                e.stopPropagation();
+                this.startKokoroTTSFromParagraph(index);
+            });
+            
+            const p = document.createElement('div');
+            p.className = 'paragraph-text';
             
             if (bionicEnabled) {
                 p.innerHTML = this.bionic.process(paragraph, strength);
@@ -617,7 +884,9 @@ class FocusReadApp {
                 p.textContent = paragraph;
             }
             
-            container.appendChild(p);
+            wrapper.appendChild(speakerBtn);
+            wrapper.appendChild(p);
+            container.appendChild(wrapper);
         });
         
         const bionicBtn = document.getElementById('bionic-toggle');
@@ -639,10 +908,9 @@ class FocusReadApp {
             wordCount += paraWords;
         }
         
-        const container = document.getElementById('text-container');
-        const paragraph = container.querySelector(`[data-paragraph="${targetParagraph}"]`);
-        if (paragraph) {
-            paragraph.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const wrapper = document.querySelector(`[data-paragraph="${targetParagraph}"]`);
+        if (wrapper) {
+            wrapper.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
     }
     
@@ -841,12 +1109,12 @@ class FocusReadApp {
     }
     
     scrollToParagraph(index) {
-        const container = document.getElementById('text-container');
-        const paragraph = container.querySelector(`[data-paragraph="${index}"]`);
-        if (paragraph) {
-            paragraph.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            paragraph.style.background = 'var(--warning)';
-            setTimeout(() => paragraph.style.background = '', 2000);
+        const wrapper = document.querySelector(`[data-paragraph="${index}"]`);
+        const textEl = wrapper?.querySelector('.paragraph-text');
+        if (wrapper && textEl) {
+            wrapper.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            textEl.style.background = 'var(--warning)';
+            setTimeout(() => textEl.style.background = '', 2000);
         }
     }
     
@@ -919,6 +1187,11 @@ class FocusReadApp {
         
         if (view === 'library') {
             document.getElementById('current-book-title').textContent = 'FocusRead';
+            this.stopKokoroTTS();
+        }
+        
+        if (view === 'rsvp') {
+            this.stopKokoroTTS();
         }
     }
     
