@@ -13,6 +13,7 @@ import { SettingsManager } from './settings.js';
 import { SearchManager } from './search.js';
 import { FirebaseSync } from './firebase-sync.js';
 import { KokoroTTS } from './kokoro-tts.js';
+import { Highlighter } from './highlighter.js';
 
 class FocusReadApp {
     constructor() {
@@ -26,11 +27,13 @@ class FocusReadApp {
         this.kokoroTTS = new KokoroTTS();
         this.search = new SearchManager();
         this.firebase = new FirebaseSync();
+        this.highlighter = null;
         
         this.currentBook = null;
         this.words = [];
         this.paragraphs = [];
         this.readingPosition = 0;
+        this.readingPercent = 0;
         this.isLocked = true;
         this.deleteBookTarget = null;
         this.reloading = false;
@@ -109,6 +112,19 @@ class FocusReadApp {
         
         await this.initFirebase();
         this.initKokoroTTS();
+        this.initHighlighter();
+    }
+    
+    initHighlighter() {
+        this.highlighter = new Highlighter(this.storage, this.firebase);
+        this.highlighter.onHighlightsChange = (highlights) => {
+            const count = highlights.length;
+            const badge = document.getElementById('highlights-badge');
+            if (badge) {
+                badge.textContent = count;
+                badge.style.display = count > 0 ? '' : 'none';
+            }
+        };
     }
     
     initKokoroTTS() {
@@ -239,8 +255,22 @@ class FocusReadApp {
         
         speedSelect.value = this.kokoroTTS.speed;
         
+        document.getElementById('download-tts-model')?.addEventListener('click', async () => {
+            const btn = document.getElementById('download-tts-model');
+            const textEl = document.getElementById('download-tts-model-text');
+            
+            if (this.kokoroTTS.isLoading || this.kokoroTTS.isModelLoaded) return;
+            
+            btn.disabled = true;
+            textEl.textContent = 'Starting download...';
+            
+            this.kokoroTTS.saveUserChoice('kokoro', 'standard');
+            await this.kokoroTTS.loadModel();
+        });
+        
         document.getElementById('delete-tts-model')?.addEventListener('click', async (e) => {
-            if (e.target.disabled) return;
+            const btn = e.target.closest('button');
+            if (btn?.disabled) return;
             if (confirm('Delete the downloaded Kokoro voice model?\n\nIt will be re-downloaded the next time you use TTS (~95 MB).')) {
                 await this.kokoroTTS.deleteModelCache();
                 this.updateTTSModelStatus();
@@ -308,15 +338,24 @@ class FocusReadApp {
         }
         
         if (labelEl) {
-            labelEl.textContent = engine === 'kokoro' ? 'Kokoro-82M' : 'System Voice';
+            if (engine === 'kokoro') {
+                labelEl.textContent = 'Kokoro-82M';
+            } else if (engine === 'no-voices') {
+                labelEl.textContent = 'No Voice';
+            } else {
+                labelEl.textContent = 'Device Voice';
+            }
         }
         
         if (detailEl) {
             if (engine === 'kokoro') {
                 const backend = this.kokoroTTS.backend || 'WASM';
                 detailEl.textContent = `Neural • ${backend.toUpperCase()}`;
+            } else if (engine === 'no-voices') {
+                detailEl.textContent = 'No voices available';
             } else {
-                detailEl.textContent = 'Device built-in';
+                const voiceName = this.kokoroTTS.currentSystemVoiceName;
+                detailEl.textContent = voiceName ? voiceName : 'Device built-in';
             }
         }
     }
@@ -450,11 +489,30 @@ class FocusReadApp {
             }
         }
         
+        const downloadBtn = document.getElementById('download-tts-model');
+        const downloadText = document.getElementById('download-tts-model-text');
+        
+        if (downloadBtn && downloadText) {
+            if (modelInfo.isLoaded || cacheInfo.cached) {
+                downloadBtn.disabled = true;
+                downloadText.textContent = 'Model downloaded';
+            } else if (modelInfo.isLoading) {
+                downloadBtn.disabled = true;
+                downloadText.textContent = 'Downloading...';
+            } else {
+                downloadBtn.disabled = false;
+                downloadText.textContent = 'Download voice model (95 MB)';
+            }
+        }
+        
         if (deleteBtn) {
             deleteBtn.disabled = !cacheInfo.cached;
-            deleteBtn.textContent = cacheInfo.cached 
-                ? 'Delete downloaded model' 
-                : 'Model not downloaded';
+            const deleteText = deleteBtn.querySelector('span');
+            if (deleteText) {
+                deleteText.textContent = cacheInfo.cached 
+                    ? 'Delete downloaded model' 
+                    : 'Model not downloaded';
+            }
         }
         
         if (fallbackInfo && fallbackReason) {
@@ -546,9 +604,10 @@ class FocusReadApp {
         const initialized = await this.firebase.init();
         if (!initialized) return;
         
-        this.firebase.onAuthChange((user) => {
+        this.firebase.onAuthChange(async (user) => {
             this.updateCloudUI(user);
             if (user && !this.isLocked) {
+                await this.syncPinWithCloud();
                 this.mergeLibraries();
             }
         });
@@ -752,6 +811,33 @@ class FocusReadApp {
             this.hideDeleteModal();
         });
         
+        document.getElementById('confirm-rename-btn')?.addEventListener('click', () => {
+            const newTitle = document.getElementById('rename-input').value;
+            this.renameBook(newTitle);
+        });
+        
+        document.getElementById('cancel-rename-btn')?.addEventListener('click', () => {
+            this.hideRenameModal();
+        });
+        
+        document.getElementById('rename-input')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const newTitle = document.getElementById('rename-input').value;
+                this.renameBook(newTitle);
+            } else if (e.key === 'Escape') {
+                this.hideRenameModal();
+            }
+        });
+        
+        document.getElementById('highlights-toggle')?.addEventListener('click', () => {
+            this.toggleHighlights();
+        });
+        
+        document.getElementById('toc-toggle')?.addEventListener('click', () => {
+            this.toggleTOC();
+        });
+        
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden' && this.currentBook) {
                 this.saveReadingPosition();
@@ -802,6 +888,84 @@ class FocusReadApp {
         modal.classList.remove('open');
         modal.setAttribute('aria-hidden', 'true');
         this.deleteBookTarget = null;
+    }
+    
+    showRenameModal(book) {
+        this.renameBookTarget = book;
+        const modal = document.getElementById('rename-modal');
+        const input = document.getElementById('rename-input');
+        
+        input.value = book.title;
+        
+        modal.classList.add('open');
+        modal.setAttribute('aria-hidden', 'false');
+        
+        setTimeout(() => {
+            input.focus();
+            input.select();
+        }, 100);
+    }
+    
+    hideRenameModal() {
+        const modal = document.getElementById('rename-modal');
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+        this.renameBookTarget = null;
+    }
+    
+    async renameBook(newTitle) {
+        if (!this.renameBookTarget || !newTitle.trim()) return;
+        
+        const book = await this.storage.getBook(this.renameBookTarget.id);
+        if (!book) {
+            this.hideRenameModal();
+            return;
+        }
+        
+        book.title = newTitle.trim();
+        book.updatedAt = Date.now();
+        await this.storage.updateBook(book);
+        
+        if (this.firebase.isSignedIn() && book.isCloud) {
+            await this.firebase.updateBookTitle(book.id, book.title);
+        }
+        
+        if (this.currentBook && this.currentBook.id === book.id) {
+            this.currentBook.title = book.title;
+            document.getElementById('current-book-title').textContent = book.title;
+        }
+        
+        this.hideRenameModal();
+        this.loadLibrary({ skipAutoOpen: true });
+    }
+    
+    async syncPinWithCloud() {
+        if (!this.firebase.isSignedIn()) return;
+        
+        const localPin = this.pin.getPinData();
+        
+        if (localPin) {
+            const result = await this.firebase.syncPin(
+                localPin.hash,
+                localPin.salt,
+                localPin.updatedAt
+            );
+            
+            if (result?.fromCloud && result.hash !== localPin.hash) {
+                this.pin.setPinData(result.hash, result.salt, result.updatedAt || Date.now());
+            }
+        } else {
+            const cloudPin = await this.firebase.getPinFromCloud();
+            if (cloudPin && cloudPin.hash && cloudPin.salt) {
+                this.pin.setPinData(cloudPin.hash, cloudPin.salt, cloudPin.updatedAt || Date.now());
+            }
+        }
+    }
+    
+    toggleHighlights() {
+        if (this.highlighter) {
+            this.highlighter.togglePanel();
+        }
     }
     
     async mergeLibraries() {
@@ -1015,7 +1179,9 @@ class FocusReadApp {
         }
     }
     
-    async loadLibrary() {
+    async loadLibrary(options = {}) {
+        const { skipAutoOpen = false } = options;
+        
         const books = await this.storage.getAllBooks();
         const grid = document.getElementById('book-grid');
         const emptyState = document.getElementById('empty-library');
@@ -1035,6 +1201,8 @@ class FocusReadApp {
             });
         }
         
+        if (skipAutoOpen) return;
+        
         const lastBook = await this.storage.getLastOpenedBook();
         if (lastBook && books.length > 0) {
             const book = books.find(b => b.id === lastBook);
@@ -1053,7 +1221,9 @@ class FocusReadApp {
         card.setAttribute('role', 'listitem');
         card.setAttribute('tabindex', '0');
         
-        const progress = book.position ? Math.round((book.position / book.wordCount) * 100) : 0;
+        const progress = book.progressPercent !== undefined 
+            ? book.progressPercent 
+            : (book.position && book.wordCount ? Math.round((book.position / book.wordCount) * 100) : 0);
         const cloudBadge = book.isCloud ? `
             <div class="book-cloud-badge" title="Synced to cloud">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1069,6 +1239,13 @@ class FocusReadApp {
                 </svg>
             </button>
             <div class="book-menu" role="menu" aria-hidden="true">
+                <button class="book-menu-item" role="menuitem" data-action="rename">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                    </svg>
+                    Rename book
+                </button>
                 <button class="book-menu-item" role="menuitem" data-action="upload" style="${this.firebase.isSignedIn() && !book.isCloud ? '' : 'display:none'}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
@@ -1119,6 +1296,13 @@ class FocusReadApp {
                 menuBtn.setAttribute('aria-expanded', 'true');
                 menu.setAttribute('aria-hidden', 'false');
             }
+        });
+        
+        const renameBtn = card.querySelector('[data-action="rename"]');
+        this.bindTapEvent(renameBtn, async (e) => {
+            e.stopPropagation();
+            menu.classList.remove('open');
+            this.showRenameModal(book);
         });
         
         const uploadBtn = card.querySelector('[data-action="upload"]');
@@ -1208,8 +1392,10 @@ class FocusReadApp {
     async openBook(book) {
         this.currentBook = book;
         this.paragraphs = book.paragraphs;
+        this.structure = book.structure || [];
         this.words = book.paragraphs.flatMap(p => p.split(/\s+/).filter(w => w));
         this.readingPosition = book.position || 0;
+        this.readingPercent = book.progressPercent || 0;
         
         document.getElementById('current-book-title').textContent = book.title;
         
@@ -1224,6 +1410,10 @@ class FocusReadApp {
         if (book.toc && book.toc.length > 0) {
             this.renderTOC(book.toc);
         }
+        
+        if (this.highlighter) {
+            await this.highlighter.loadHighlights(book.id);
+        }
     }
     
     renderText() {
@@ -1234,9 +1424,20 @@ class FocusReadApp {
         container.innerHTML = '';
         
         this.paragraphs.forEach((paragraph, index) => {
+            const structureInfo = this.structure?.[index] || {};
+            
             const wrapper = document.createElement('div');
             wrapper.className = 'paragraph-wrapper';
             wrapper.setAttribute('data-paragraph', index);
+            
+            if (structureInfo.type === 'heading') {
+                const level = structureInfo.headingLevel || 1;
+                wrapper.classList.add(`heading-${level}`);
+            } else if (structureInfo.type === 'list') {
+                wrapper.classList.add('list-item');
+            } else if (structureInfo.type === 'blockquote') {
+                wrapper.classList.add('block-quote');
+            }
             
             const speakerBtn = document.createElement('button');
             speakerBtn.className = 'paragraph-speaker';
@@ -1254,6 +1455,9 @@ class FocusReadApp {
             
             const p = document.createElement('div');
             p.className = 'paragraph-text';
+            
+            if (structureInfo.isBold) p.classList.add('text-bold');
+            if (structureInfo.isItalic) p.classList.add('text-italic');
             
             if (bionicEnabled) {
                 p.innerHTML = this.bionic.process(paragraph, strength);
@@ -1301,15 +1505,15 @@ class FocusReadApp {
         const scrollHeight = container.scrollHeight;
         const clientHeight = content.clientHeight;
         
-        const percent = Math.min(100, Math.round((scrollTop / (scrollHeight - clientHeight)) * 100)) || 0;
+        const scrollPercent = Math.min(100, Math.round((scrollTop / Math.max(1, scrollHeight - clientHeight)) * 100)) || 0;
         
-        document.getElementById('reading-progress').style.width = `${percent}%`;
-        document.getElementById('progress-percent').textContent = `${percent}%`;
+        document.getElementById('reading-progress').style.width = `${scrollPercent}%`;
+        document.getElementById('progress-percent').textContent = `${scrollPercent}%`;
         
         const progressBar = document.querySelector('.progress-container');
-        progressBar.setAttribute('aria-valuenow', percent);
+        progressBar.setAttribute('aria-valuenow', scrollPercent);
         
-        const wordsRead = Math.round((percent / 100) * this.words.length);
+        const wordsRead = Math.round((scrollPercent / 100) * this.words.length);
         const wordsLeft = this.words.length - wordsRead;
         
         const ttsSpeed = this.kokoroTTS?.speed || 1;
@@ -1324,12 +1528,14 @@ class FocusReadApp {
         }
         
         this.readingPosition = wordsRead;
+        this.readingPercent = scrollPercent;
     }
     
     async saveReadingPosition() {
         if (!this.currentBook) return;
         
         this.currentBook.position = this.readingPosition;
+        this.currentBook.progressPercent = this.readingPercent || 0;
         this.currentBook.updatedAt = Date.now();
         await this.storage.updateBook(this.currentBook);
         
@@ -1552,7 +1758,7 @@ class FocusReadApp {
         this.scrollToPosition();
     }
     
-    async showView(view) {
+    showView(view) {
         this.toggleSearch(false);
         this.toggleTOC(false);
         
@@ -1578,10 +1784,26 @@ class FocusReadApp {
             document.getElementById('current-book-title').textContent = 'FocusRead';
             this.stopKokoroTTS();
             
-            if (this.currentBook) {
-                await this.saveReadingPosition();
-            }
-            await this.loadLibrary();
+            const bookToSave = this.currentBook;
+            this.currentBook = null;
+            
+            (async () => {
+                try {
+                    if (bookToSave) {
+                        bookToSave.position = this.readingPosition;
+                        bookToSave.progressPercent = this.readingPercent || 0;
+                        bookToSave.updatedAt = Date.now();
+                        await this.storage.updateBook(bookToSave);
+                    }
+                } catch (e) {
+                    console.error('Error saving position:', e);
+                }
+                try {
+                    await this.loadLibrary({ skipAutoOpen: true });
+                } catch (e) {
+                    console.error('Error loading library:', e);
+                }
+            })();
         }
         
         if (view === 'rsvp') {
@@ -1652,6 +1874,7 @@ class FocusReadApp {
                 id: Date.now().toString(),
                 title: file.name.replace('.pdf', ''),
                 paragraphs: result.paragraphs,
+                structure: result.structure || [],
                 wordCount: result.paragraphs.flatMap(p => p.split(/\s+/).filter(w => w)).length,
                 toc: result.toc,
                 pageBreaks: result.pageBreaks,

@@ -234,7 +234,7 @@ export class FirebaseSync {
         this.setSyncStatus('syncing');
         
         try {
-            const { doc, getDoc, setDoc, serverTimestamp, Timestamp } = this._firestore;
+            const { doc, getDoc, setDoc, serverTimestamp } = this._firestore;
             const settingsRef = doc(db, 'users', currentUser.uid, 'settings', 'prefs');
             const cloudDoc = await getDoc(settingsRef);
             
@@ -262,6 +262,134 @@ export class FirebaseSync {
             console.error('Settings sync error:', error);
             this.setSyncStatus('error');
             return localSettings;
+        }
+    }
+    
+    async syncPin(pinHash, pinSalt, localUpdatedAt) {
+        if (!currentUser || !this.initialized) return null;
+        
+        try {
+            const { doc, getDoc, setDoc, serverTimestamp } = this._firestore;
+            const pinRef = doc(db, 'users', currentUser.uid, 'settings', 'pin');
+            const cloudDoc = await getDoc(pinRef);
+            
+            if (cloudDoc.exists()) {
+                const cloudData = cloudDoc.data();
+                const cloudUpdatedAt = cloudData.updatedAt?.toMillis?.() || cloudData.updatedAt || 0;
+                
+                if (cloudUpdatedAt > localUpdatedAt) {
+                    return {
+                        hash: cloudData.hash,
+                        salt: cloudData.salt,
+                        fromCloud: true
+                    };
+                }
+            }
+            
+            if (pinHash && pinSalt) {
+                await setDoc(pinRef, {
+                    hash: pinHash,
+                    salt: pinSalt,
+                    updatedAt: serverTimestamp()
+                });
+            }
+            
+            return { hash: pinHash, salt: pinSalt, fromCloud: false };
+            
+        } catch (error) {
+            console.error('PIN sync error:', error);
+            return null;
+        }
+    }
+    
+    async getPinFromCloud() {
+        if (!currentUser || !this.initialized) return null;
+        
+        try {
+            const { doc, getDoc } = this._firestore;
+            const pinRef = doc(db, 'users', currentUser.uid, 'settings', 'pin');
+            const cloudDoc = await getDoc(pinRef);
+            
+            if (cloudDoc.exists()) {
+                const data = cloudDoc.data();
+                return { hash: data.hash, salt: data.salt };
+            }
+            return null;
+        } catch (error) {
+            console.error('Get PIN from cloud error:', error);
+            return null;
+        }
+    }
+    
+    async syncHighlights(bookId, highlights) {
+        if (!currentUser || !this.initialized) return highlights;
+        
+        try {
+            const { doc, getDoc, setDoc, serverTimestamp } = this._firestore;
+            const highlightsRef = doc(db, 'users', currentUser.uid, 'books', bookId, 'highlights', 'data');
+            
+            const cloudDoc = await getDoc(highlightsRef);
+            const localUpdatedAt = highlights.updatedAt || 0;
+            
+            if (cloudDoc.exists()) {
+                const cloudData = cloudDoc.data();
+                const cloudUpdatedAt = cloudData.updatedAt?.toMillis?.() || cloudData.updatedAt || 0;
+                
+                if (cloudUpdatedAt > localUpdatedAt) {
+                    return { 
+                        items: cloudData.items || [], 
+                        updatedAt: cloudUpdatedAt 
+                    };
+                }
+            }
+            
+            await setDoc(highlightsRef, {
+                items: highlights.items || [],
+                updatedAt: serverTimestamp()
+            });
+            
+            return highlights;
+            
+        } catch (error) {
+            console.error('Highlights sync error:', error);
+            return highlights;
+        }
+    }
+    
+    async getHighlightsFromCloud(bookId) {
+        if (!currentUser || !this.initialized) return null;
+        
+        try {
+            const { doc, getDoc } = this._firestore;
+            const highlightsRef = doc(db, 'users', currentUser.uid, 'books', bookId, 'highlights', 'data');
+            const cloudDoc = await getDoc(highlightsRef);
+            
+            if (cloudDoc.exists()) {
+                const data = cloudDoc.data();
+                return { items: data.items || [], updatedAt: data.updatedAt?.toMillis?.() || 0 };
+            }
+            return { items: [], updatedAt: 0 };
+        } catch (error) {
+            console.error('Get highlights error:', error);
+            return { items: [], updatedAt: 0 };
+        }
+    }
+    
+    async updateBookTitle(bookId, newTitle) {
+        if (!currentUser || !this.initialized) return false;
+        
+        try {
+            const { doc, updateDoc, serverTimestamp } = this._firestore;
+            const bookRef = doc(db, 'users', currentUser.uid, 'books', bookId);
+            
+            await updateDoc(bookRef, {
+                title: newTitle,
+                updatedAt: serverTimestamp()
+            });
+            return true;
+        } catch (error) {
+            console.error('Update book title error:', error);
+            return false;
         }
     }
     
@@ -518,6 +646,155 @@ export class FirebaseSync {
         }
         
         return chunks;
+    }
+    
+    async syncPin(pinHash, pinSalt, localUpdatedAt) {
+        if (!currentUser || !this.initialized) return { hash: pinHash, salt: pinSalt, fromCloud: false };
+        
+        try {
+            const { doc, getDoc, setDoc } = this._firestore;
+            const pinRef = doc(db, 'users', currentUser.uid, 'settings', 'pin');
+            const pinDoc = await getDoc(pinRef);
+            
+            if (pinDoc.exists()) {
+                const cloudData = pinDoc.data();
+                const cloudUpdatedAt = cloudData.updatedAt || 0;
+                
+                if (cloudUpdatedAt > localUpdatedAt) {
+                    return {
+                        hash: cloudData.hash,
+                        salt: cloudData.salt,
+                        updatedAt: cloudUpdatedAt,
+                        fromCloud: true
+                    };
+                }
+            }
+            
+            await setDoc(pinRef, {
+                hash: pinHash,
+                salt: pinSalt,
+                updatedAt: Date.now()
+            });
+            
+            return { hash: pinHash, salt: pinSalt, fromCloud: false };
+            
+        } catch (error) {
+            console.error('Sync PIN error:', error);
+            return { hash: pinHash, salt: pinSalt, fromCloud: false };
+        }
+    }
+    
+    async getPinFromCloud() {
+        if (!currentUser || !this.initialized) return null;
+        
+        try {
+            const { doc, getDoc } = this._firestore;
+            const pinRef = doc(db, 'users', currentUser.uid, 'settings', 'pin');
+            const pinDoc = await getDoc(pinRef);
+            
+            if (pinDoc.exists()) {
+                const data = pinDoc.data();
+                return {
+                    hash: data.hash,
+                    salt: data.salt,
+                    updatedAt: data.updatedAt || 0
+                };
+            }
+            
+            return null;
+            
+        } catch (error) {
+            console.error('Get PIN from cloud error:', error);
+            return null;
+        }
+    }
+    
+    async syncHighlights(bookId, highlightsData) {
+        if (!currentUser || !this.initialized) return;
+        
+        try {
+            const { doc, setDoc, deleteDoc, collection, getDocs, query, writeBatch } = this._firestore;
+            const highlightsCollection = collection(db, 'users', currentUser.uid, 'books', bookId, 'highlights');
+            
+            const existingDocs = await getDocs(query(highlightsCollection));
+            const existingIds = new Set();
+            existingDocs.forEach(d => existingIds.add(d.id));
+            
+            const newIds = new Set(highlightsData.items.map(h => h.id));
+            
+            const batch = writeBatch(db);
+            
+            for (const highlight of highlightsData.items) {
+                const highlightRef = doc(highlightsCollection, highlight.id);
+                batch.set(highlightRef, {
+                    ...highlight,
+                    syncedAt: Date.now()
+                });
+            }
+            
+            for (const existingId of existingIds) {
+                if (!newIds.has(existingId)) {
+                    const highlightRef = doc(highlightsCollection, existingId);
+                    batch.delete(highlightRef);
+                }
+            }
+            
+            await batch.commit();
+            
+        } catch (error) {
+            console.error('Sync highlights error:', error);
+        }
+    }
+    
+    async getHighlightsFromCloud(bookId) {
+        if (!currentUser || !this.initialized) return null;
+        
+        try {
+            const { collection, getDocs, query, orderBy } = this._firestore;
+            const highlightsCollection = collection(db, 'users', currentUser.uid, 'books', bookId, 'highlights');
+            const highlightsDocs = await getDocs(query(highlightsCollection));
+            
+            if (highlightsDocs.empty) return null;
+            
+            const items = [];
+            let maxUpdatedAt = 0;
+            
+            highlightsDocs.forEach(doc => {
+                const data = doc.data();
+                items.push(data);
+                const updatedAt = data.updatedAt || data.syncedAt || 0;
+                if (updatedAt > maxUpdatedAt) maxUpdatedAt = updatedAt;
+            });
+            
+            return {
+                items,
+                updatedAt: maxUpdatedAt
+            };
+            
+        } catch (error) {
+            console.error('Get highlights from cloud error:', error);
+            return null;
+        }
+    }
+    
+    async updateBookTitle(bookId, newTitle) {
+        if (!currentUser || !this.initialized) return false;
+        
+        try {
+            const { doc, updateDoc, serverTimestamp } = this._firestore;
+            const bookRef = doc(db, 'users', currentUser.uid, 'books', bookId);
+            
+            await updateDoc(bookRef, {
+                title: newTitle,
+                updatedAt: serverTimestamp()
+            });
+            
+            return true;
+            
+        } catch (error) {
+            console.error('Update book title error:', error);
+            return false;
+        }
     }
     
     flushPendingSync() {

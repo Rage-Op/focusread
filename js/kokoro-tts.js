@@ -75,11 +75,34 @@ export class KokoroTTS {
         
         this.webSpeechUtterance = null;
         this.webSpeechSynth = window.speechSynthesis;
+        this.webSpeechVoicesLoaded = false;
+        this.webSpeechStartTime = 0;
+        this.webSpeechEstimatedDuration = 0;
+        this.noVoicesAvailable = false;
+        this.currentSystemVoiceName = null;
         
         this.loadTimeoutId = null;
         this.lastProgressTime = 0;
         
         this.loadUserChoice();
+        this.initWebSpeechVoices();
+    }
+    
+    initWebSpeechVoices() {
+        const loadVoices = () => {
+            const voices = this.webSpeechSynth.getVoices();
+            this.webSpeechVoicesLoaded = voices.length > 0;
+            this.noVoicesAvailable = voices.length === 0;
+        };
+        
+        loadVoices();
+        
+        if (this.webSpeechSynth.onvoiceschanged !== undefined) {
+            this.webSpeechSynth.onvoiceschanged = loadVoices;
+        }
+        
+        setTimeout(loadVoices, 100);
+        setTimeout(loadVoices, 500);
     }
     
     loadUserChoice() {
@@ -315,9 +338,16 @@ export class KokoroTTS {
         
         this.isLoading = true;
         const sizeMB = MODEL_INFO[this.preferredModel]?.sizeMB || 95;
-        this.onLoadProgress?.(0, 'Starting download...', 0, sizeMB);
+        this.onLoadProgress?.(0, 'Preparing...', 0, sizeMB);
         
         try {
+            const cacheInfo = await this.checkModelCached();
+            if (cacheInfo.cached && cacheInfo.sizeMB > 150) {
+                this.onLoadProgress?.(0, 'Clearing old model...', 0, sizeMB);
+                await this.deleteModelCache();
+                this.isLoading = true;
+            }
+            
             this.initWorker();
             this.startLoadTimeout();
             
@@ -459,6 +489,8 @@ export class KokoroTTS {
                 },
                 onUseSystem: () => {
                     this.saveUserChoice('system');
+                    this.useSystemVoices = true;
+                    this.onEngineChange?.('system');
                 }
             });
         }
@@ -580,6 +612,15 @@ export class KokoroTTS {
     playWithWebSpeech() {
         if (!this.isPlaying || this.isPaused) return;
         
+        const voices = this.webSpeechSynth.getVoices();
+        
+        if (voices.length === 0) {
+            this.noVoicesAvailable = true;
+            this.onEngineChange?.('no-voices');
+            this.updateWebSpeechTime();
+            return;
+        }
+        
         const sentence = this.sentences[this.currentSentenceIndex];
         if (!sentence) {
             this.stop();
@@ -592,15 +633,27 @@ export class KokoroTTS {
         }
         this.onSentenceChange?.(this.currentSentenceIndex, sentence.text);
         
+        const wordCount = sentence.text.split(/\s+/).filter(w => w).length;
+        const wpm = 150 * this.speed;
+        this.webSpeechEstimatedDuration = (wordCount / wpm) * 60;
+        this.webSpeechStartTime = Date.now();
+        
         this.webSpeechUtterance = new SpeechSynthesisUtterance(sentence.text);
         this.webSpeechUtterance.rate = this.speed;
         this.webSpeechUtterance.volume = this.volume;
         
-        const voices = this.webSpeechSynth.getVoices();
-        const selectedVoice = voices.find(v => v.name === this.currentVoice);
+        const selectedVoice = voices.find(v => v.name === this.currentVoice) || voices[0];
         if (selectedVoice) {
             this.webSpeechUtterance.voice = selectedVoice;
+            this.currentSystemVoiceName = selectedVoice.name;
         }
+        
+        this.updateWebSpeechTime();
+        
+        this.webSpeechUtterance.onstart = () => {
+            this.webSpeechStartTime = Date.now();
+            this.updateWebSpeechTime();
+        };
         
         this.webSpeechUtterance.onend = () => {
             if (this.isPlaying && !this.isPaused) {
@@ -619,12 +672,31 @@ export class KokoroTTS {
         };
         
         this.webSpeechUtterance.onerror = (e) => {
-            if (e.error !== 'interrupted') {
+            if (e.error !== 'interrupted' && e.error !== 'canceled') {
                 console.error('Web Speech error:', e);
+                this.currentSentenceIndex++;
+                if (this.currentSentenceIndex < this.sentences.length) {
+                    setTimeout(() => this.playWithWebSpeech(), 100);
+                } else {
+                    this.stop();
+                }
             }
         };
         
         this.webSpeechSynth.speak(this.webSpeechUtterance);
+    }
+    
+    updateWebSpeechTime() {
+        if (!this.isPlaying || !this.useSystemVoices) return;
+        
+        const elapsed = (Date.now() - this.webSpeechStartTime) / 1000;
+        const duration = Math.max(this.webSpeechEstimatedDuration, 1);
+        
+        this.onTimeUpdate?.(Math.min(elapsed, duration), duration);
+        
+        if (this.isPlaying && !this.isPaused && this.useSystemVoices) {
+            requestAnimationFrame(() => this.updateWebSpeechTime());
+        }
     }
     
     play() {

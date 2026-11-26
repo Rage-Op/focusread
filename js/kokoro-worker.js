@@ -11,14 +11,14 @@ let currentModelType = 'standard';
 
 const MODELS = {
     standard: {
-        dtype: 'q4',
+        dtype: 'q8',
         sizeMB: 95,
         name: 'Standard (95 MB)'
     },
     high: {
-        dtype: 'q8',
-        sizeMB: 170,
-        name: 'High Quality (170 MB)'
+        dtype: 'q4',
+        sizeMB: 300,
+        name: 'High Quality (300 MB)'
     }
 };
 

@@ -1,6 +1,7 @@
 /**
- * PDF text extraction using pdf.js
- * Handles text reflow, dehyphenation, and header/footer removal
+ * Smart PDF text extraction using pdf.js
+ * Detects structure: headings, paragraphs, lists, block quotes
+ * Uses font info, positions, and gaps for intelligent formatting
  */
 
 export class PDFHandler {
@@ -22,27 +23,32 @@ export class PDFHandler {
         }).promise;
         
         const numPages = pdf.numPages;
-        const allPageTexts = [];
+        const allPageData = [];
         const pageBreaks = {};
         let totalWords = 0;
         
+        let fontStats = { sizes: [], baseSize: 12 };
+        
         for (let i = 1; i <= numPages; i++) {
-            if (this.cancelled) {
-                throw new Error('Import cancelled');
-            }
+            if (this.cancelled) throw new Error('Import cancelled');
             
             const page = await pdf.getPage(i);
             const textContent = await page.getTextContent();
+            const viewport = page.getViewport({ scale: 1 });
             
-            const pageText = this.extractPageText(textContent);
-            allPageTexts.push(pageText);
+            const pageData = this.analyzePageContent(textContent, viewport, fontStats);
+            allPageData.push(pageData);
+            
+            fontStats = this.updateFontStats(fontStats, pageData.items);
             
             pageBreaks[i - 1] = totalWords;
-            totalWords += pageText.split(/\s+/).filter(w => w).length;
+            totalWords += pageData.wordCount;
             
             const progress = Math.round((i / numPages) * 100);
             onProgress?.(progress, i, numPages);
         }
+        
+        fontStats.baseSize = this.calculateBaseSize(fontStats.sizes);
         
         let toc = [];
         try {
@@ -54,194 +60,335 @@ export class PDFHandler {
             console.log('Could not extract TOC:', e);
         }
         
-        const processedText = this.processText(allPageTexts);
-        const paragraphs = this.splitIntoParagraphs(processedText);
+        const headerFooterPatterns = this.detectHeadersFooters(allPageData);
+        const structuredContent = this.buildStructure(allPageData, fontStats, headerFooterPatterns);
         
         return {
-            paragraphs,
-            toc,
+            paragraphs: structuredContent.paragraphs,
+            structure: structuredContent.structure,
+            toc: toc.length > 0 ? toc : structuredContent.detectedToc,
             pageBreaks
         };
     }
     
-    extractPageText(textContent) {
+    analyzePageContent(textContent, viewport, fontStats) {
         const items = textContent.items;
-        if (!items.length) return '';
+        if (!items.length) return { items: [], lines: [], wordCount: 0 };
         
+        const pageHeight = viewport.height;
+        const analyzedItems = items.map(item => {
+            const fontSize = Math.abs(item.transform[0]) || Math.abs(item.transform[3]) || 12;
+            const x = item.transform[4];
+            const y = pageHeight - item.transform[5];
+            const isBold = this.isBoldFont(item.fontName || '');
+            const isItalic = this.isItalicFont(item.fontName || '');
+            
+            return {
+                str: item.str,
+                x,
+                y,
+                width: item.width || 0,
+                height: item.height || fontSize,
+                fontSize,
+                fontName: item.fontName || '',
+                isBold,
+                isItalic
+            };
+        });
+        
+        const lines = this.groupIntoLines(analyzedItems);
+        const wordCount = analyzedItems.reduce((count, item) => 
+            count + item.str.split(/\s+/).filter(w => w).length, 0);
+        
+        return { items: analyzedItems, lines, wordCount };
+    }
+    
+    isBoldFont(fontName) {
+        const lower = fontName.toLowerCase();
+        return lower.includes('bold') || lower.includes('black') || lower.includes('heavy');
+    }
+    
+    isItalicFont(fontName) {
+        const lower = fontName.toLowerCase();
+        return lower.includes('italic') || lower.includes('oblique');
+    }
+    
+    groupIntoLines(items) {
+        if (!items.length) return [];
+        
+        const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
         const lines = [];
-        let currentLine = [];
-        let lastY = null;
+        let currentLine = { items: [], y: sorted[0].y, minX: Infinity, maxX: 0 };
+        
         const lineThreshold = 5;
         
-        for (const item of items) {
-            const y = item.transform[5];
-            
-            if (lastY !== null && Math.abs(y - lastY) > lineThreshold) {
-                if (currentLine.length) {
-                    lines.push(currentLine.map(i => i.str).join(''));
-                }
-                currentLine = [];
+        for (const item of sorted) {
+            if (currentLine.items.length && Math.abs(item.y - currentLine.y) > lineThreshold) {
+                lines.push(this.finalizeLine(currentLine));
+                currentLine = { items: [], y: item.y, minX: Infinity, maxX: 0 };
             }
             
-            currentLine.push(item);
-            lastY = y;
+            currentLine.items.push(item);
+            currentLine.minX = Math.min(currentLine.minX, item.x);
+            currentLine.maxX = Math.max(currentLine.maxX, item.x + item.width);
+            currentLine.y = (currentLine.y * (currentLine.items.length - 1) + item.y) / currentLine.items.length;
         }
         
-        if (currentLine.length) {
-            lines.push(currentLine.map(i => i.str).join(''));
+        if (currentLine.items.length) {
+            lines.push(this.finalizeLine(currentLine));
         }
         
-        return lines.join('\n');
+        return lines;
     }
     
-    processText(pageTexts) {
-        const headerFooterPatterns = this.detectHeadersFooters(pageTexts);
-        
-        let processedPages = pageTexts.map(pageText => {
-            let lines = pageText.split('\n');
-            
-            lines = lines.filter(line => {
-                const trimmed = line.trim();
-                
-                if (headerFooterPatterns.has(trimmed)) return false;
-                
-                if (/^[\d\s\-–—\.]+$/.test(trimmed) && trimmed.length < 10) return false;
-                
-                if (/^(page|chapter|section)\s*\d+$/i.test(trimmed)) return false;
-                
-                return true;
-            });
-            
-            return lines.join('\n');
-        });
-        
-        let fullText = processedPages.join('\n\n');
-        
-        fullText = this.dehyphenate(fullText);
-        
-        fullText = this.joinBrokenLines(fullText);
-        
-        return fullText;
+    finalizeLine(line) {
+        line.items.sort((a, b) => a.x - b.x);
+        line.text = line.items.map(i => i.str).join('');
+        line.avgFontSize = line.items.reduce((sum, i) => sum + i.fontSize, 0) / line.items.length;
+        line.maxFontSize = Math.max(...line.items.map(i => i.fontSize));
+        line.isBold = line.items.some(i => i.isBold);
+        line.indent = line.minX;
+        return line;
     }
     
-    detectHeadersFooters(pageTexts) {
-        const lineFrequency = new Map();
+    updateFontStats(stats, items) {
+        for (const item of items) {
+            stats.sizes.push(item.fontSize);
+        }
+        return stats;
+    }
+    
+    calculateBaseSize(sizes) {
+        if (!sizes.length) return 12;
         
-        for (const pageText of pageTexts) {
-            const lines = pageText.split('\n');
+        const freq = {};
+        for (const size of sizes) {
+            const rounded = Math.round(size);
+            freq[rounded] = (freq[rounded] || 0) + 1;
+        }
+        
+        let maxCount = 0;
+        let baseSize = 12;
+        for (const [size, count] of Object.entries(freq)) {
+            if (count > maxCount) {
+                maxCount = count;
+                baseSize = parseInt(size);
+            }
+        }
+        
+        return baseSize;
+    }
+    
+    detectHeadersFooters(allPageData) {
+        const topLines = new Map();
+        const bottomLines = new Map();
+        
+        for (const pageData of allPageData) {
+            const lines = pageData.lines;
+            if (!lines.length) continue;
             
-            const topLines = lines.slice(0, 3);
-            const bottomLines = lines.slice(-3);
+            const pageTop = lines.slice(0, 2);
+            const pageBottom = lines.slice(-2);
             
-            [...topLines, ...bottomLines].forEach(line => {
-                const normalized = line.trim().replace(/\d+/g, '#');
-                if (normalized.length > 2) {
-                    lineFrequency.set(normalized, (lineFrequency.get(normalized) || 0) + 1);
+            for (const line of pageTop) {
+                const normalized = line.text.trim().replace(/\d+/g, '#');
+                if (normalized.length > 2 && normalized.length < 100) {
+                    topLines.set(normalized, (topLines.get(normalized) || 0) + 1);
                 }
-            });
+            }
+            
+            for (const line of pageBottom) {
+                const normalized = line.text.trim().replace(/\d+/g, '#');
+                if (normalized.length > 2 && normalized.length < 100) {
+                    bottomLines.set(normalized, (bottomLines.get(normalized) || 0) + 1);
+                }
+            }
         }
         
-        const threshold = Math.max(3, pageTexts.length * 0.3);
-        const repeatPatterns = new Set();
+        const threshold = Math.max(3, allPageData.length * 0.3);
+        const patterns = new Set();
         
-        for (const [pattern, count] of lineFrequency) {
-            if (count >= threshold) {
-                for (const pageText of pageTexts) {
-                    const lines = pageText.split('\n');
-                    for (const line of lines) {
-                        const normalized = line.trim().replace(/\d+/g, '#');
-                        if (normalized === pattern) {
-                            repeatPatterns.add(line.trim());
-                        }
+        for (const [pattern, count] of topLines) {
+            if (count >= threshold) patterns.add(pattern);
+        }
+        for (const [pattern, count] of bottomLines) {
+            if (count >= threshold) patterns.add(pattern);
+        }
+        
+        return patterns;
+    }
+    
+    buildStructure(allPageData, fontStats, headerFooterPatterns) {
+        const baseSize = fontStats.baseSize;
+        const h1Threshold = baseSize * 1.5;
+        const h2Threshold = baseSize * 1.25;
+        const h3Threshold = baseSize * 1.1;
+        
+        const structure = [];
+        const detectedToc = [];
+        let currentParagraph = [];
+        let lastLine = null;
+        let baseIndent = null;
+        
+        for (const pageData of allPageData) {
+            for (const line of pageData.lines) {
+                const normalizedText = line.text.trim().replace(/\d+/g, '#');
+                
+                if (headerFooterPatterns.has(normalizedText)) continue;
+                if (/^[\d\s\-–—\.]+$/.test(line.text.trim()) && line.text.trim().length < 10) continue;
+                if (/^(page|chapter|section)\s*\d+$/i.test(line.text.trim())) continue;
+                
+                if (baseIndent === null && line.indent > 0) {
+                    baseIndent = line.indent;
+                }
+                
+                const isHeading = this.detectHeading(line, baseSize, h1Threshold, h2Threshold, h3Threshold);
+                const isList = this.detectListItem(line.text);
+                const isBlockQuote = this.detectBlockQuote(line, baseIndent);
+                const isLargeGap = lastLine && (line.y - lastLine.y) > lastLine.avgFontSize * 2;
+                const isIndented = baseIndent && line.indent > baseIndent + 20;
+                
+                if (isHeading) {
+                    if (currentParagraph.length) {
+                        structure.push({ type: 'paragraph', text: this.mergeParagraph(currentParagraph) });
+                        currentParagraph = [];
+                    }
+                    
+                    structure.push({ 
+                        type: isHeading, 
+                        text: line.text.trim(),
+                        isBold: line.isBold
+                    });
+                    
+                    if (isHeading === 'h1' || isHeading === 'h2') {
+                        detectedToc.push({
+                            title: line.text.trim(),
+                            level: isHeading === 'h1' ? 0 : 1,
+                            page: 0
+                        });
+                    }
+                    
+                    lastLine = line;
+                    continue;
+                }
+                
+                if (isLargeGap || (isIndented && !isList)) {
+                    if (currentParagraph.length) {
+                        structure.push({ type: 'paragraph', text: this.mergeParagraph(currentParagraph) });
+                        currentParagraph = [];
                     }
                 }
+                
+                if (isList) {
+                    if (currentParagraph.length) {
+                        structure.push({ type: 'paragraph', text: this.mergeParagraph(currentParagraph) });
+                        currentParagraph = [];
+                    }
+                    structure.push({ type: 'list-item', text: line.text.trim() });
+                } else if (isBlockQuote) {
+                    if (currentParagraph.length) {
+                        structure.push({ type: 'paragraph', text: this.mergeParagraph(currentParagraph) });
+                        currentParagraph = [];
+                    }
+                    structure.push({ type: 'blockquote', text: line.text.trim() });
+                } else {
+                    currentParagraph.push(line);
+                }
+                
+                lastLine = line;
             }
         }
         
-        return repeatPatterns;
-    }
-    
-    dehyphenate(text) {
-        return text.replace(/(\w+)-\n(\w+)/g, (match, before, after) => {
-            return before + after;
-        });
-    }
-    
-    joinBrokenLines(text) {
-        const lines = text.split('\n');
-        const result = [];
-        let buffer = '';
+        if (currentParagraph.length) {
+            structure.push({ type: 'paragraph', text: this.mergeParagraph(currentParagraph) });
+        }
         
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
+        const paragraphs = this.structureToParagraphs(structure);
+        
+        return { structure, paragraphs, detectedToc };
+    }
+    
+    detectHeading(line, baseSize, h1, h2, h3) {
+        const text = line.text.trim();
+        
+        if (text.length > 200) return false;
+        if (text.length < 2) return false;
+        
+        const endsWithPunctuation = /[.,:;]$/.test(text);
+        if (endsWithPunctuation && !text.match(/^(chapter|part|section|introduction|conclusion)/i)) {
+            return false;
+        }
+        
+        if (line.maxFontSize >= h1) return 'h1';
+        if (line.maxFontSize >= h2) return 'h2';
+        if ((line.maxFontSize >= h3 || line.isBold) && text.length < 100) return 'h3';
+        
+        if (/^(chapter|part)\s+[\dIVXLCM]+/i.test(text)) return 'h1';
+        if (/^(section|article)\s+[\d\.]+/i.test(text)) return 'h2';
+        if (/^[\dIVXLCM]+\.\s+[A-Z]/.test(text) && text.length < 80) return 'h2';
+        
+        return false;
+    }
+    
+    detectListItem(text) {
+        const trimmed = text.trim();
+        if (/^[\•\-\*\◦\▪\▸]\s/.test(trimmed)) return true;
+        if (/^\d+[\.\)]\s/.test(trimmed)) return true;
+        if (/^[a-z][\.\)]\s/i.test(trimmed)) return true;
+        if (/^[IVXLCMivxlcm]+[\.\)]\s/.test(trimmed)) return true;
+        return false;
+    }
+    
+    detectBlockQuote(line, baseIndent) {
+        if (!baseIndent) return false;
+        return line.indent > baseIndent + 40;
+    }
+    
+    mergeParagraph(lines) {
+        if (!lines.length) return '';
+        
+        let text = lines.map(l => l.text).join(' ');
+        
+        text = text.replace(/(\w+)-\s+(\w+)/g, '$1$2');
+        
+        text = text.replace(/\s+/g, ' ').trim();
+        
+        return text;
+    }
+    
+    structureToParagraphs(structure) {
+        const paragraphs = [];
+        let currentListItems = [];
+        
+        for (let i = 0; i < structure.length; i++) {
+            const item = structure[i];
             
-            if (!line) {
-                if (buffer) {
-                    result.push(buffer);
-                    buffer = '';
+            if (item.type === 'list-item') {
+                currentListItems.push(item.text);
+                
+                const nextItem = structure[i + 1];
+                if (!nextItem || nextItem.type !== 'list-item') {
+                    paragraphs.push(currentListItems.join('\n'));
+                    currentListItems = [];
                 }
-                result.push('');
                 continue;
             }
             
-            const endsWithSentenceEnd = /[.!?:;]["'""''\)\]]*$/.test(line);
-            const isShortLine = line.length < 50;
-            const nextLine = lines[i + 1]?.trim() || '';
-            const nextStartsLower = nextLine && /^[a-z]/.test(nextLine);
-            const nextStartsCapital = nextLine && /^[A-Z]/.test(nextLine);
-            
-            if (buffer) {
-                buffer += ' ' + line;
-            } else {
-                buffer = line;
+            if (currentListItems.length) {
+                paragraphs.push(currentListItems.join('\n'));
+                currentListItems = [];
             }
             
-            if (endsWithSentenceEnd || (isShortLine && nextStartsCapital && !nextStartsLower)) {
-                result.push(buffer);
-                buffer = '';
-            } else if (!nextLine) {
-                result.push(buffer);
-                buffer = '';
+            if (item.text && item.text.trim()) {
+                paragraphs.push(item.text.trim());
             }
         }
         
-        if (buffer) {
-            result.push(buffer);
+        if (currentListItems.length) {
+            paragraphs.push(currentListItems.join('\n'));
         }
         
-        return result.join('\n');
-    }
-    
-    splitIntoParagraphs(text) {
-        const rawParagraphs = text.split(/\n\s*\n/);
-        
-        const paragraphs = rawParagraphs
-            .map(p => p.replace(/\s+/g, ' ').trim())
-            .filter(p => p.length > 0);
-        
-        const longParagraphs = [];
-        for (const para of paragraphs) {
-            if (para.length > 2000) {
-                const sentences = para.match(/[^.!?]+[.!?]+[\s"'""''\)\]]*|[^.!?]+$/g) || [para];
-                let chunk = '';
-                
-                for (const sentence of sentences) {
-                    if (chunk.length + sentence.length > 1500 && chunk) {
-                        longParagraphs.push(chunk.trim());
-                        chunk = '';
-                    }
-                    chunk += sentence;
-                }
-                
-                if (chunk.trim()) {
-                    longParagraphs.push(chunk.trim());
-                }
-            } else {
-                longParagraphs.push(para);
-            }
-        }
-        
-        return longParagraphs;
+        return paragraphs.filter(p => p.length > 0);
     }
     
     async processOutline(outline, pdf) {
@@ -280,5 +427,12 @@ export class PDFHandler {
         
         await processItems(outline);
         return toc;
+    }
+    
+    async reprocessBook(book) {
+        return {
+            ...book,
+            reprocessed: true
+        };
     }
 }

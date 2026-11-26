@@ -28,6 +28,19 @@ export class PinManager {
         return !!localStorage.getItem('focusread_pin_hash');
     }
     
+    getPinData() {
+        const hash = localStorage.getItem('focusread_pin_hash');
+        const salt = localStorage.getItem('focusread_pin_salt');
+        const updatedAt = parseInt(localStorage.getItem('focusread_pin_updated') || '0');
+        return hash && salt ? { hash, salt, updatedAt } : null;
+    }
+    
+    setPinData(hash, salt, updatedAt) {
+        localStorage.setItem('focusread_pin_hash', hash);
+        localStorage.setItem('focusread_pin_salt', salt);
+        localStorage.setItem('focusread_pin_updated', updatedAt.toString());
+    }
+    
     bindEvents(onSuccess, onError) {
         this.onSuccess = onSuccess;
         this.onError = onError;
@@ -180,9 +193,13 @@ export class PinManager {
     async savePin(pin) {
         const salt = this.generateSalt();
         const hash = await this.hashPin(pin, salt);
+        const updatedAt = Date.now();
         
         localStorage.setItem('focusread_pin_hash', hash);
         localStorage.setItem('focusread_pin_salt', salt);
+        localStorage.setItem('focusread_pin_updated', updatedAt.toString());
+        
+        return { hash, salt, updatedAt };
     }
     
     async verifyPin(pin) {

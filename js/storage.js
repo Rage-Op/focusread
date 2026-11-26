@@ -111,4 +111,26 @@ export class StorageManager {
     async getLastOpenedBook() {
         return localStorage.getItem('focusread_last_book');
     }
+    
+    async saveBookHighlights(bookId, data) {
+        try {
+            localStorage.setItem(`focusread_highlights_${bookId}`, JSON.stringify(data));
+        } catch (e) {
+            console.error('Error saving highlights:', e);
+        }
+    }
+    
+    async getBookHighlights(bookId) {
+        try {
+            const data = localStorage.getItem(`focusread_highlights_${bookId}`);
+            return data ? JSON.parse(data) : null;
+        } catch (e) {
+            console.error('Error loading highlights:', e);
+            return null;
+        }
+    }
+    
+    async deleteBookHighlights(bookId) {
+        localStorage.removeItem(`focusread_highlights_${bookId}`);
+    }
 }
