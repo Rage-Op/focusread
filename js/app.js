@@ -33,8 +33,30 @@ class FocusReadApp {
         this.readingPosition = 0;
         this.isLocked = true;
         this.deleteBookTarget = null;
+        this.reloading = false;
         
         this.init();
+    }
+    
+    showUpdateToast(autoReload = false) {
+        let toast = document.getElementById('update-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'update-toast';
+            toast.className = 'update-toast';
+            toast.innerHTML = `
+                <span>Updated, reloading...</span>
+            `;
+            document.body.appendChild(toast);
+        }
+        
+        toast.classList.add('visible');
+        
+        if (autoReload) {
+            setTimeout(() => {
+                location.reload();
+            }, 500);
+        }
     }
     
     async init() {
@@ -47,7 +69,39 @@ class FocusReadApp {
         
         if ('serviceWorker' in navigator) {
             try {
-                await navigator.serviceWorker.register('sw.js');
+                const registration = await navigator.serviceWorker.register('sw.js', {
+                    updateViaCache: 'none'
+                });
+                
+                registration.addEventListener('updatefound', () => {
+                    const newWorker = registration.installing;
+                    newWorker.addEventListener('statechange', () => {
+                        if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                            this.showUpdateToast();
+                        }
+                    });
+                });
+                
+                navigator.serviceWorker.addEventListener('message', (event) => {
+                    if (event.data?.type === 'SW_ACTIVATED') {
+                        this.showUpdateToast(true);
+                    }
+                });
+                
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (this.reloading) return;
+                    this.reloading = true;
+                    this.showUpdateToast(true);
+                });
+                
+                registration.update();
+                
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') {
+                        registration.update();
+                    }
+                });
+                
             } catch (e) {
                 console.log('Service worker registration failed:', e);
             }
@@ -69,10 +123,10 @@ class FocusReadApp {
             }
         };
         
-        this.kokoroTTS.onParagraphChange = (index) => {
+        this.kokoroTTS.onParagraphChange = (index, totalParagraphs) => {
             this.highlightReadingParagraph(index);
             this.scrollToParagraphSmooth(index);
-            this.updateTTSPositionInfo(index);
+            this.updateTTSPositionInfo(index, totalParagraphs);
         };
         
         this.kokoroTTS.onSentenceChange = (index, text) => {
@@ -83,22 +137,49 @@ class FocusReadApp {
             this.updateTTSTime(elapsed, total);
         };
         
-        this.kokoroTTS.onLoadProgress = (percent, message, loadedMB) => {
+        this.kokoroTTS.onLoadProgress = (percent, message, loadedMB, totalMB) => {
             const overlay = document.getElementById('tts-loading-overlay');
             const bar = document.getElementById('tts-loading-bar');
             const text = document.getElementById('tts-loading-text');
             const sizeText = document.getElementById('tts-loading-size');
             const percentText = document.getElementById('tts-loading-percent');
             
+            const elapsedEl = document.getElementById('tts-elapsed');
+            const durationEl = document.getElementById('tts-duration');
+            const seekBar = document.getElementById('tts-seek');
+            
             if (percent < 100) {
                 overlay.style.display = '';
                 bar.style.width = `${percent}%`;
                 text.textContent = message;
-                if (sizeText) sizeText.textContent = loadedMB > 0 ? `${loadedMB} MB / ~80 MB` : '';
+                
+                if (sizeText) {
+                    if (loadedMB > 0 && totalMB > 0) {
+                        sizeText.textContent = `${loadedMB} MB / ${totalMB} MB`;
+                    } else if (loadedMB > 0) {
+                        sizeText.textContent = `${loadedMB} MB`;
+                    } else {
+                        sizeText.textContent = '';
+                    }
+                }
                 if (percentText) percentText.textContent = `${percent}%`;
+                
+                if (elapsedEl && loadedMB > 0) {
+                    elapsedEl.textContent = `${loadedMB} MB`;
+                }
+                if (durationEl && totalMB > 0) {
+                    durationEl.textContent = `${totalMB} MB`;
+                }
+                if (seekBar && percent > 0) {
+                    seekBar.value = percent;
+                }
             } else {
                 overlay.style.display = 'none';
                 this.updateTTSModelStatus();
+                
+                if (elapsedEl) elapsedEl.textContent = '0:00';
+                if (durationEl) durationEl.textContent = '0:00';
+                if (seekBar) seekBar.value = 0;
             }
         };
         
@@ -154,8 +235,9 @@ class FocusReadApp {
         
         speedSelect.value = this.kokoroTTS.speed;
         
-        document.getElementById('delete-tts-model')?.addEventListener('click', async () => {
-            if (confirm('Delete the downloaded Kokoro voice model?\n\nIt will be re-downloaded the next time you use TTS (~80 MB).')) {
+        document.getElementById('delete-tts-model')?.addEventListener('click', async (e) => {
+            if (e.target.disabled) return;
+            if (confirm('Delete the downloaded Kokoro voice model?\n\nIt will be re-downloaded the next time you use TTS (~300 MB).')) {
                 await this.kokoroTTS.deleteModelCache();
                 this.updateTTSModelStatus();
             }
@@ -235,25 +317,45 @@ class FocusReadApp {
         }
     }
     
-    updateTTSPositionInfo(paragraphIndex) {
+    updateTTSPositionInfo(paragraphIndex, totalParagraphs) {
         const positionEl = document.getElementById('tts-para-position');
         const timeLeftEl = document.getElementById('tts-time-remaining');
         
+        const total = totalParagraphs || this.kokoroTTS.paragraphs.length || this.paragraphs.length;
+        
         if (positionEl) {
-            const total = this.paragraphs.length;
             positionEl.textContent = `Paragraph ${paragraphIndex + 1} of ${total}`;
         }
         
-        if (timeLeftEl && this.words.length > 0) {
-            let wordsFromPara = 0;
-            for (let i = 0; i < paragraphIndex; i++) {
-                wordsFromPara += this.paragraphs[i].split(/\s+/).filter(w => w).length;
+        if (timeLeftEl) {
+            const ttsParagraphs = this.kokoroTTS.paragraphs.length > 0 
+                ? this.kokoroTTS.paragraphs 
+                : this.paragraphs;
+            
+            if (ttsParagraphs.length > 0) {
+                let wordsFromPara = 0;
+                for (let i = 0; i <= paragraphIndex; i++) {
+                    if (ttsParagraphs[i]) {
+                        wordsFromPara += ttsParagraphs[i].split(/\s+/).filter(w => w).length;
+                    }
+                }
+                
+                let totalWords = 0;
+                for (const para of ttsParagraphs) {
+                    totalWords += para.split(/\s+/).filter(w => w).length;
+                }
+                
+                const wordsLeft = totalWords - wordsFromPara;
+                const speed = this.kokoroTTS.speed || 1;
+                const wpm = 150 * speed;
+                const minutesLeft = Math.max(1, Math.ceil(wordsLeft / wpm));
+                
+                if (wordsLeft > 0) {
+                    timeLeftEl.textContent = `~${minutesLeft} min left`;
+                } else {
+                    timeLeftEl.textContent = 'Finishing...';
+                }
             }
-            const wordsLeft = this.words.length - wordsFromPara;
-            const speed = this.kokoroTTS.speed || 1;
-            const wpm = 150 * speed;
-            const minutesLeft = Math.ceil(wordsLeft / wpm);
-            timeLeftEl.textContent = `~${minutesLeft} min left`;
         }
     }
     
@@ -302,7 +404,10 @@ class FocusReadApp {
         }
         
         if (deleteBtn) {
-            deleteBtn.style.display = cacheInfo.cached ? '' : 'none';
+            deleteBtn.disabled = !cacheInfo.cached;
+            deleteBtn.textContent = cacheInfo.cached 
+                ? 'Delete downloaded model' 
+                : 'Model not downloaded';
         }
         
         if (fallbackInfo && fallbackReason) {
@@ -353,6 +458,8 @@ class FocusReadApp {
         const bar = document.getElementById('tts-playback-bar');
         bar?.classList.add('visible');
         bar?.setAttribute('aria-hidden', 'false');
+        
+        this.updateTTSPositionInfo(index, this.paragraphs.length);
         
         await this.kokoroTTS.startFromParagraph(index, this.paragraphs);
     }

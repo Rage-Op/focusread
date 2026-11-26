@@ -1,6 +1,6 @@
 /**
  * Kokoro TTS Module
- * High-quality text-to-speech using Kokoro-82M model via kokoro-js
+ * High-quality text-to-speech using Kokoro-82M model via Web Worker
  * Falls back to Web Speech API if model unavailable
  */
 
@@ -18,11 +18,11 @@ const KOKORO_VOICES = [
 const MODEL_CACHE_NAME = 'focusread-kokoro-model-v1';
 const DEFAULT_VOICE = 'af_heart';
 const SENTENCE_BUFFER_SIZE = 2;
-const MODEL_SIZE_MB = 80;
+const MODEL_SIZE_MB = 300;
+const LOAD_TIMEOUT_MS = 60000;
 
 export class KokoroTTS {
     constructor() {
-        this.kokoro = null;
         this.worker = null;
         this.isModelLoaded = false;
         this.isModelCached = false;
@@ -49,7 +49,8 @@ export class KokoroTTS {
         this.audioContext = null;
         this.currentSource = null;
         this.audioQueue = [];
-        this.isGenerating = false;
+        this.pendingGenerations = new Map();
+        this.generationId = 0;
         this.startTime = 0;
         this.pauseTime = 0;
         this.totalDuration = 0;
@@ -65,6 +66,9 @@ export class KokoroTTS {
         
         this.webSpeechUtterance = null;
         this.webSpeechSynth = window.speechSynthesis;
+        
+        this.loadTimeoutId = null;
+        this.lastProgressTime = 0;
     }
     
     getVoices() {
@@ -91,32 +95,137 @@ export class KokoroTTS {
     async checkDeviceCapability() {
         if (this.forceSystemVoices) return false;
         
-        const dominated = navigator.deviceMemory;
-        if (dominated && dominated < 4) {
-            console.log('Low memory device, using system voices');
-            return false;
-        }
-        
-        if ('gpu' in navigator) {
-            try {
-                const adapter = await navigator.gpu?.requestAdapter();
-                if (adapter) {
-                    console.log('WebGPU available');
-                    return true;
-                }
-            } catch (e) {
-                console.log('WebGPU not available:', e);
-            }
-        }
-        
-        const isOldiOS = /iPhone|iPad/.test(navigator.userAgent) && 
-            !('gpu' in navigator);
-        if (isOldiOS) {
-            console.log('Older iOS without WebGPU, using system voices');
+        const memory = navigator.deviceMemory;
+        if (memory && memory < 4) {
             return false;
         }
         
         return true;
+    }
+    
+    initWorker() {
+        if (this.worker) return;
+        
+        const workerUrl = new URL('./kokoro-worker.js', import.meta.url);
+        this.worker = new Worker(workerUrl, { type: 'module' });
+        
+        this.worker.onmessage = (event) => {
+            const { type, percent, message, loadedMB, totalMB, backend, error, id, wav } = event.data;
+            
+            switch (type) {
+                case 'progress':
+                    this.loadProgress = percent;
+                    this.loadedMB = loadedMB || 0;
+                    this.lastProgressTime = Date.now();
+                    this.onLoadProgress?.(percent, message, loadedMB, totalMB);
+                    break;
+                    
+                case 'loaded':
+                    this.isModelLoaded = true;
+                    this.isModelCached = true;
+                    this.isLoading = false;
+                    this.useSystemVoices = false;
+                    this.backend = backend || 'wasm';
+                    this.fallbackReason = null;
+                    this.clearLoadTimeout();
+                    this.onLoadProgress?.(100, 'Ready', MODEL_SIZE_MB, MODEL_SIZE_MB);
+                    this.onEngineChange?.('kokoro');
+                    break;
+                    
+                case 'error':
+                    this.handleLoadError(error);
+                    break;
+                    
+                case 'audio':
+                    this.handleGeneratedAudio(id, wav);
+                    break;
+                    
+                case 'generate_error':
+                    this.handleGenerationError(id, error);
+                    break;
+                    
+                case 'pong':
+                    break;
+            }
+        };
+        
+        this.worker.onerror = (error) => {
+            this.handleLoadError(error.message || 'Worker error');
+        };
+    }
+    
+    handleLoadError(error) {
+        console.error('Kokoro load error:', error);
+        this.isLoading = false;
+        this.clearLoadTimeout();
+        this.useSystemVoices = true;
+        this.fallbackReason = `Model failed to load: ${error}. Using system voices.`;
+        this.onEngineChange?.('system');
+        this.onLoadProgress?.(100, 'Using system voices (load failed)', 0, 0);
+    }
+    
+    handleGeneratedAudio(id, wavBuffer) {
+        const pending = this.pendingGenerations.get(id);
+        if (!pending) return;
+        
+        this.pendingGenerations.delete(id);
+        
+        this.audioContext.decodeAudioData(wavBuffer)
+            .then((audioBuffer) => {
+                if (this.isPlaying) {
+                    this.audioQueue.push({
+                        buffer: audioBuffer,
+                        sentenceIndex: pending.sentenceIndex,
+                        duration: audioBuffer.duration
+                    });
+                    
+                    if (!this.currentSource) {
+                        this.playNextInQueue();
+                    }
+                    
+                    this.generateNext();
+                }
+            })
+            .catch((err) => {
+                console.error('Decode error:', err);
+                this.generateNext();
+            });
+    }
+    
+    handleGenerationError(id, error) {
+        console.error('Generation error:', error);
+        const pending = this.pendingGenerations.get(id);
+        if (pending) {
+            this.pendingGenerations.delete(id);
+            this.generateNext();
+        }
+    }
+    
+    clearLoadTimeout() {
+        if (this.loadTimeoutId) {
+            clearTimeout(this.loadTimeoutId);
+            this.loadTimeoutId = null;
+        }
+    }
+    
+    startLoadTimeout() {
+        this.clearLoadTimeout();
+        this.lastProgressTime = Date.now();
+        
+        const checkProgress = () => {
+            const elapsed = Date.now() - this.lastProgressTime;
+            
+            if (elapsed > LOAD_TIMEOUT_MS && this.isLoading) {
+                this.handleLoadError('Download stalled - no progress for 60 seconds');
+                return;
+            }
+            
+            if (this.isLoading) {
+                this.loadTimeoutId = setTimeout(checkProgress, 5000);
+            }
+        };
+        
+        this.loadTimeoutId = setTimeout(checkProgress, 5000);
     }
     
     async loadModel(onProgress) {
@@ -126,92 +235,41 @@ export class KokoroTTS {
         const canUseKokoro = await this.checkDeviceCapability();
         if (!canUseKokoro) {
             this.useSystemVoices = true;
-            this.fallbackReason = 'Device does not support Kokoro (low memory or no WebGPU/WASM)';
+            this.fallbackReason = 'Device does not meet requirements for Kokoro';
             this.onEngineChange?.('system');
             return true;
         }
         
         this.isLoading = true;
-        this.onLoadProgress?.(0, 'Initializing...', 0);
+        this.onLoadProgress?.(0, 'Starting...', 0, MODEL_SIZE_MB);
         
         try {
-            const importPromise = import('https://cdn.jsdelivr.net/npm/kokoro-js@1.1.0/+esm');
-            const importTimeout = this.timeoutPromise(15000, 'Import timeout');
+            this.initWorker();
+            this.startLoadTimeout();
             
-            const module = await Promise.race([importPromise, importTimeout]);
-            if (!module) throw new Error('Import timeout');
+            this.worker.postMessage({ type: 'load', voice: this.currentVoice });
             
-            const { KokoroTTS: KokoroModel } = module;
-            
-            this.onLoadProgress?.(10, 'Loading model...', 0);
-            
-            const modelPromise = KokoroModel.from_pretrained(
-                'onnx-community/Kokoro-82M-v1.0-ONNX',
-                {
-                    dtype: 'q4',
-                    device: 'wasm',
-                    progress_callback: (progress) => {
-                        const percent = Math.round(10 + progress.progress * 0.85);
-                        const loadedMB = Math.round((progress.progress / 100) * MODEL_SIZE_MB);
-                        this.loadProgress = percent;
-                        this.loadedMB = loadedMB;
-                        this.onLoadProgress?.(percent, 'Downloading model...', loadedMB);
-                        onProgress?.(percent);
+            return new Promise((resolve) => {
+                const checkLoaded = setInterval(() => {
+                    if (this.isModelLoaded || this.useSystemVoices) {
+                        clearInterval(checkLoaded);
+                        resolve(true);
                     }
-                }
-            );
-            
-            const modelTimeout = this.timeoutPromise(120000, 'Model load timeout');
-            this.kokoro = await Promise.race([modelPromise, modelTimeout]);
-            
-            if (!this.kokoro) throw new Error('Model load timeout');
-            
-            this.backend = 'wasm';
-            this.onLoadProgress?.(98, 'Warming up...', MODEL_SIZE_MB);
-            
-            const warmupPromise = this.kokoro.generate('Hi', { voice: DEFAULT_VOICE });
-            const warmupTimeout = this.timeoutPromise(15000, 'Warmup timeout');
-            
-            try {
-                await Promise.race([warmupPromise, warmupTimeout]);
+                }, 100);
                 
-                this.isModelLoaded = true;
-                this.isModelCached = true;
-                this.isLoading = false;
-                this.useSystemVoices = false;
-                this.fallbackReason = null;
-                this.onLoadProgress?.(100, 'Ready', MODEL_SIZE_MB);
-                this.onEngineChange?.('kokoro');
-                
-                return true;
-            } catch (warmupError) {
-                console.warn('Warmup failed, falling back to system voices:', warmupError);
-                this.isLoading = false;
-                this.kokoro = null;
-                this.isModelCached = true;
-                this.useSystemVoices = true;
-                this.fallbackReason = 'Model warmup failed (device may be too slow). Using system voices.';
-                this.onEngineChange?.('system');
-                this.onLoadProgress?.(100, 'Using system voices', 0);
-                return true;
-            }
+                setTimeout(() => {
+                    clearInterval(checkLoaded);
+                    if (!this.isModelLoaded && !this.useSystemVoices) {
+                        this.handleLoadError('Load timeout');
+                    }
+                    resolve(true);
+                }, 180000);
+            });
             
         } catch (error) {
-            console.error('Failed to load Kokoro model:', error);
-            this.isLoading = false;
-            this.kokoro = null;
-            this.useSystemVoices = true;
-            this.fallbackReason = `Model failed to load: ${error.message}`;
-            this.onEngineChange?.('system');
-            this.onLoadProgress?.(100, 'Using system voices', 0);
+            this.handleLoadError(error.message);
             return true;
         }
-    }
-    
-    timeoutPromise(ms, message) {
-        return new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(message)), ms);
-        });
     }
     
     async checkModelCached() {
@@ -265,7 +323,11 @@ export class KokoroTTS {
             
             this.isModelLoaded = false;
             this.isModelCached = false;
-            this.kokoro = null;
+            
+            if (this.worker) {
+                this.worker.terminate();
+                this.worker = null;
+            }
             
             return true;
         } catch (e) {
@@ -336,7 +398,7 @@ export class KokoroTTS {
         this.isPlaying = true;
         this.isPaused = false;
         this.onPlayStateChange?.(true);
-        this.onParagraphChange?.(paragraphIndex);
+        this.onParagraphChange?.(paragraphIndex, this.paragraphs.length);
         
         if (this.useSystemVoices) {
             this.playWithWebSpeech();
@@ -355,54 +417,47 @@ export class KokoroTTS {
         }
     }
     
-    async generateAndPlay() {
+    generateAndPlay() {
         if (!this.isPlaying || this.isPaused) return;
         
-        while (this.audioQueue.length < SENTENCE_BUFFER_SIZE && 
-               this.currentSentenceIndex + this.audioQueue.length < this.sentences.length) {
-            const nextIndex = this.currentSentenceIndex + this.audioQueue.length;
-            const sentence = this.sentences[nextIndex];
-            
-            if (!this.isGenerating) {
-                this.isGenerating = true;
-                try {
-                    const audio = await this.kokoro.generate(sentence.text, {
-                        voice: this.currentVoice,
-                    });
-                    
-                    if (this.isPlaying) {
-                        const audioBuffer = await this.decodeAudioData(audio);
-                        this.audioQueue.push({
-                            buffer: audioBuffer,
-                            sentenceIndex: nextIndex,
-                            duration: audioBuffer.duration
-                        });
-                    }
-                } catch (error) {
-                    console.error('Generation error:', error);
-                }
-                this.isGenerating = false;
-            } else {
-                break;
-            }
-        }
-        
-        if (this.audioQueue.length > 0 && !this.currentSource) {
-            this.playNextInQueue();
-        }
-        
-        if (this.audioQueue.length < SENTENCE_BUFFER_SIZE && this.isPlaying && !this.isPaused) {
-            setTimeout(() => this.generateAndPlay(), 100);
-        }
+        this.generateNext();
     }
     
-    async decodeAudioData(kokoroAudio) {
-        const wavData = kokoroAudio.toWav();
-        const arrayBuffer = wavData.buffer.slice(
-            wavData.byteOffset,
-            wavData.byteOffset + wavData.byteLength
-        );
-        return await this.audioContext.decodeAudioData(arrayBuffer);
+    generateNext() {
+        if (!this.isPlaying || this.isPaused) return;
+        
+        while (this.pendingGenerations.size < SENTENCE_BUFFER_SIZE && 
+               this.audioQueue.length + this.pendingGenerations.size < SENTENCE_BUFFER_SIZE * 2) {
+            
+            let nextIndex = this.currentSentenceIndex;
+            for (const pending of this.pendingGenerations.values()) {
+                if (pending.sentenceIndex >= nextIndex) {
+                    nextIndex = pending.sentenceIndex + 1;
+                }
+            }
+            for (const queued of this.audioQueue) {
+                if (queued.sentenceIndex >= nextIndex) {
+                    nextIndex = queued.sentenceIndex + 1;
+                }
+            }
+            
+            if (nextIndex >= this.sentences.length) break;
+            
+            const sentence = this.sentences[nextIndex];
+            const id = ++this.generationId;
+            
+            this.pendingGenerations.set(id, {
+                sentenceIndex: nextIndex,
+                text: sentence.text
+            });
+            
+            this.worker.postMessage({
+                type: 'generate',
+                text: sentence.text,
+                voice: this.currentVoice,
+                id
+            });
+        }
     }
     
     playNextInQueue() {
@@ -417,7 +472,7 @@ export class KokoroTTS {
         
         if (sentence.paragraphIndex !== this.currentParagraphIndex) {
             this.currentParagraphIndex = sentence.paragraphIndex;
-            this.onParagraphChange?.(this.currentParagraphIndex);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
         }
         this.onSentenceChange?.(item.sentenceIndex, sentence.text);
         
@@ -432,8 +487,8 @@ export class KokoroTTS {
             if (this.isPlaying && !this.isPaused) {
                 if (this.currentSentenceIndex < this.sentences.length - 1) {
                     this.playNextInQueue();
-                    this.generateAndPlay();
-                } else {
+                    this.generateNext();
+                } else if (this.audioQueue.length === 0 && this.pendingGenerations.size === 0) {
                     this.stop();
                 }
             }
@@ -465,7 +520,7 @@ export class KokoroTTS {
         
         if (sentence.paragraphIndex !== this.currentParagraphIndex) {
             this.currentParagraphIndex = sentence.paragraphIndex;
-            this.onParagraphChange?.(this.currentParagraphIndex);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
         }
         this.onSentenceChange?.(this.currentSentenceIndex, sentence.text);
         
@@ -513,7 +568,7 @@ export class KokoroTTS {
                 this.audioContext.resume();
             }
             this.playNextInQueue();
-            this.generateAndPlay();
+            this.generateNext();
         }
     }
     
@@ -538,7 +593,7 @@ export class KokoroTTS {
         this.isPlaying = false;
         this.isPaused = false;
         this.audioQueue = [];
-        this.isGenerating = false;
+        this.pendingGenerations.clear();
         
         if (this.useSystemVoices) {
             this.webSpeechSynth.cancel();
@@ -554,7 +609,6 @@ export class KokoroTTS {
     
     nextParagraph() {
         if (this.currentParagraphIndex < this.paragraphs.length - 1) {
-            const wasPlaying = this.isPlaying && !this.isPaused;
             this.stop();
             this.currentParagraphIndex++;
             
@@ -564,7 +618,7 @@ export class KokoroTTS {
             this.isPlaying = true;
             this.isPaused = false;
             this.onPlayStateChange?.(true);
-            this.onParagraphChange?.(this.currentParagraphIndex);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
             
             if (this.useSystemVoices) {
                 this.playWithWebSpeech();
@@ -576,7 +630,6 @@ export class KokoroTTS {
     
     previousParagraph() {
         if (this.currentParagraphIndex > 0) {
-            const wasPlaying = this.isPlaying && !this.isPaused;
             this.stop();
             this.currentParagraphIndex--;
             
@@ -586,7 +639,7 @@ export class KokoroTTS {
             this.isPlaying = true;
             this.isPaused = false;
             this.onPlayStateChange?.(true);
-            this.onParagraphChange?.(this.currentParagraphIndex);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
             
             if (this.useSystemVoices) {
                 this.playWithWebSpeech();
@@ -623,6 +676,7 @@ export class KokoroTTS {
             isPaused: this.isPaused,
             currentParagraphIndex: this.currentParagraphIndex,
             currentSentenceIndex: this.currentSentenceIndex,
+            totalParagraphs: this.paragraphs.length,
             engine: this.getEngine(),
             voice: this.currentVoice,
             speed: this.speed,
