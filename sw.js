@@ -3,7 +3,7 @@
  * Network-first for app files, cache fallback for offline
  */
 
-const CACHE_NAME = 'focusread-v6';
+const CACHE_NAME = 'focusread-v7';
 
 const APP_FILES = [
     './',
