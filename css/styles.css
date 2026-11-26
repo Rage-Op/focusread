@@ -1526,33 +1526,34 @@ input[type="range"] {
 
 .paragraph-speaker {
     flex-shrink: 0;
-    width: 32px;
-    height: 32px;
-    border: none;
+    width: 36px;
+    height: 36px;
+    border: 2px solid var(--accent);
     border-radius: 50%;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
+    background: var(--bg-primary);
+    color: var(--accent);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    opacity: 0.6;
+    opacity: 1;
     transition: all var(--transition-fast);
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
     margin-top: 0.1em;
+    box-shadow: 0 2px 4px var(--shadow);
 }
 
 .paragraph-speaker:hover,
 .paragraph-speaker:active {
-    opacity: 1;
     background: var(--accent);
     color: white;
+    transform: scale(1.05);
 }
 
 .paragraph-speaker svg {
-    width: 16px;
-    height: 16px;
+    width: 18px;
+    height: 18px;
 }
 
 .paragraph-text {
@@ -1595,6 +1596,60 @@ input[type="range"] {
     padding: var(--spacing-sm) var(--spacing-md);
     max-width: 600px;
     margin: 0 auto;
+}
+
+/* TTS Status Row */
+.tts-status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--spacing-xs);
+    font-size: 0.75rem;
+    flex-wrap: wrap;
+    gap: var(--spacing-xs);
+}
+
+.tts-position-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    color: var(--text-secondary);
+}
+
+.tts-separator {
+    color: var(--text-muted);
+}
+
+.tts-engine-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.engine-badge {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+.engine-badge .engine-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+}
+
+.engine-badge[data-engine="system"] .engine-dot {
+    background: var(--warning);
+}
+
+.engine-detail {
+    color: var(--text-muted);
+    font-size: 0.7rem;
 }
 
 .tts-controls-row {
@@ -1801,11 +1856,21 @@ input[type="range"] {
     to { transform: rotate(360deg); }
 }
 
+.tts-loading-status {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: var(--spacing-sm);
+}
+
 #tts-loading-text {
     font-size: 0.9rem;
     color: var(--text-secondary);
-    display: block;
-    margin-bottom: var(--spacing-sm);
+}
+
+.tts-loading-detail {
+    font-size: 0.75rem;
+    color: var(--text-muted);
 }
 
 .tts-loading-progress {
@@ -1814,7 +1879,7 @@ input[type="range"] {
     background: var(--bg-tertiary);
     border-radius: 3px;
     overflow: hidden;
-    margin: 0 auto;
+    margin: 0 auto var(--spacing-xs);
 }
 
 .tts-loading-bar {
@@ -1822,6 +1887,129 @@ input[type="range"] {
     background: var(--accent);
     width: 0%;
     transition: width var(--transition-fast);
+}
+
+.tts-loading-percent {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+/* TTS Settings Info Card */
+.tts-info-card {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.tts-info-header {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-weight: 600;
+    font-size: 0.85rem;
+    margin-bottom: var(--spacing-xs);
+    color: var(--text-primary);
+}
+
+.tts-info-icon {
+    width: 16px;
+    height: 16px;
+    color: var(--accent);
+}
+
+.tts-info-text {
+    font-size: 0.8rem;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    margin: 0;
+}
+
+.tts-info-text strong {
+    color: var(--text-primary);
+}
+
+/* TTS Model Status */
+.tts-model-status {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-md);
+}
+
+.model-status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-xs) 0;
+    font-size: 0.85rem;
+}
+
+.model-status-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+}
+
+.model-status-label {
+    color: var(--text-secondary);
+}
+
+.model-status-value {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+.model-status-value.cached {
+    color: var(--success);
+}
+
+.model-status-value.not-cached {
+    color: var(--text-muted);
+}
+
+#delete-tts-model {
+    width: 100%;
+    margin-top: var(--spacing-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-xs);
+}
+
+#delete-tts-model svg {
+    width: 16px;
+    height: 16px;
+}
+
+.danger-btn {
+    color: var(--error);
+    border-color: var(--error);
+}
+
+.danger-btn:hover {
+    background: var(--error);
+    color: white;
+}
+
+/* TTS Fallback Info */
+.tts-fallback-info {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    background: rgba(255, 193, 7, 0.1);
+    border: 1px solid var(--warning);
+    border-radius: 8px;
+    margin-top: var(--spacing-sm);
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.tts-fallback-info svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+    color: var(--warning);
 }
 
 /* Adjust reader content when playback bar is visible */
@@ -1884,24 +2072,89 @@ body.tts-active .back-btn {
     height: 18px;
 }
 
-.user-info {
+.cloud-account-info {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+    padding: var(--spacing-sm);
+    background: var(--bg-secondary);
+    border-radius: 8px;
+}
+
+.cloud-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.cloud-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cloud-avatar svg {
+    width: 24px;
+    height: 24px;
+}
+
+.cloud-account-details {
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-xs);
-    margin-bottom: var(--spacing-sm);
+    min-width: 0;
 }
 
 .user-email {
     font-size: 0.85rem;
     color: var(--text-primary);
-    word-break: break-all;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.sync-indicator {
+.user-name {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.sync-status-panel {
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    padding: var(--spacing-sm);
+    margin-bottom: var(--spacing-sm);
+}
+
+.sync-status-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-xs) 0;
+    font-size: 0.8rem;
+}
+
+.sync-status-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+}
+
+.sync-status-label {
+    color: var(--text-muted);
+}
+
+.sync-status-value {
     display: flex;
     align-items: center;
-    gap: var(--spacing-xs);
-    font-size: 0.8rem;
+    gap: 6px;
+    color: var(--text-primary);
+    font-weight: 500;
 }
 
 .sync-dot {
@@ -1909,40 +2162,65 @@ body.tts-active .back-btn {
     height: 8px;
     border-radius: 50%;
     background: var(--success);
+    flex-shrink: 0;
 }
 
-.sync-indicator[data-status="syncing"] .sync-dot {
+.sync-dot[data-status="syncing"] {
     background: var(--warning);
     animation: pulse 1s infinite;
 }
 
-.sync-indicator[data-status="error"] .sync-dot {
+.sync-dot[data-status="error"] {
     background: var(--error);
 }
 
-.sync-indicator[data-status="idle"] .sync-text::after {
-    content: "Synced";
-}
-
-.sync-indicator[data-status="syncing"] .sync-text::after {
-    content: "Syncing...";
-}
-
-.sync-indicator[data-status="error"] .sync-text::after {
-    content: "Sync error";
-}
-
-.sync-text {
-    color: var(--text-muted);
-}
-
-.sync-text::after {
-    content: "";
+.sync-dot[data-status="idle"] {
+    background: var(--success);
 }
 
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+}
+
+.sync-progress-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-xs);
+}
+
+.sync-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.sync-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width var(--transition-fast);
+}
+
+.sync-progress-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: center;
+}
+
+.sync-error-row {
+    background: rgba(220, 53, 69, 0.1);
+    border-radius: 4px;
+    padding: var(--spacing-xs) !important;
+    margin-top: var(--spacing-xs);
+}
+
+.sync-error-text {
+    color: var(--error);
+    font-size: 0.75rem;
+    word-break: break-word;
 }
 
 .cloud-actions {
@@ -1954,6 +2232,15 @@ body.tts-active .back-btn {
     flex: 1;
     font-size: 0.8rem;
     padding: var(--spacing-xs) var(--spacing-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+}
+
+.cloud-actions button svg {
+    width: 14px;
+    height: 14px;
 }
 
 /* Sign In Modal */
