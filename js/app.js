@@ -123,10 +123,14 @@ class FocusReadApp {
             }
         };
         
-        this.kokoroTTS.onParagraphChange = (index, totalParagraphs) => {
+        this.kokoroTTS.onParagraphChange = (index, totalParagraphs, estimatedMinutes) => {
             this.highlightReadingParagraph(index);
             this.scrollToParagraphSmooth(index);
-            this.updateTTSPositionInfo(index, totalParagraphs);
+            this.updateTTSPositionInfo(index, totalParagraphs, estimatedMinutes);
+        };
+        
+        this.kokoroTTS.onNeedConsent = (options) => {
+            this.showTTSConsentSheet(options);
         };
         
         this.kokoroTTS.onSentenceChange = (index, text) => {
@@ -237,7 +241,7 @@ class FocusReadApp {
         
         document.getElementById('delete-tts-model')?.addEventListener('click', async (e) => {
             if (e.target.disabled) return;
-            if (confirm('Delete the downloaded Kokoro voice model?\n\nIt will be re-downloaded the next time you use TTS (~300 MB).')) {
+            if (confirm('Delete the downloaded Kokoro voice model?\n\nIt will be re-downloaded the next time you use TTS (~95 MB).')) {
                 await this.kokoroTTS.deleteModelCache();
                 this.updateTTSModelStatus();
             }
@@ -317,7 +321,7 @@ class FocusReadApp {
         }
     }
     
-    updateTTSPositionInfo(paragraphIndex, totalParagraphs) {
+    updateTTSPositionInfo(paragraphIndex, totalParagraphs, estimatedMinutes) {
         const positionEl = document.getElementById('tts-para-position');
         const timeLeftEl = document.getElementById('tts-time-remaining');
         
@@ -328,35 +332,78 @@ class FocusReadApp {
         }
         
         if (timeLeftEl) {
-            const ttsParagraphs = this.kokoroTTS.paragraphs.length > 0 
-                ? this.kokoroTTS.paragraphs 
-                : this.paragraphs;
-            
-            if (ttsParagraphs.length > 0) {
-                let wordsFromPara = 0;
-                for (let i = 0; i <= paragraphIndex; i++) {
-                    if (ttsParagraphs[i]) {
-                        wordsFromPara += ttsParagraphs[i].split(/\s+/).filter(w => w).length;
+            if (estimatedMinutes !== undefined && estimatedMinutes > 0) {
+                timeLeftEl.textContent = `~${estimatedMinutes} min left`;
+            } else if (estimatedMinutes === 0) {
+                timeLeftEl.textContent = 'Finishing...';
+            } else {
+                const ttsParagraphs = this.kokoroTTS.paragraphs.length > 0 
+                    ? this.kokoroTTS.paragraphs 
+                    : this.paragraphs;
+                
+                if (ttsParagraphs.length > 0) {
+                    let wordsLeft = 0;
+                    for (let i = paragraphIndex; i < ttsParagraphs.length; i++) {
+                        if (ttsParagraphs[i]) {
+                            wordsLeft += ttsParagraphs[i].split(/\s+/).filter(w => w).length;
+                        }
                     }
-                }
-                
-                let totalWords = 0;
-                for (const para of ttsParagraphs) {
-                    totalWords += para.split(/\s+/).filter(w => w).length;
-                }
-                
-                const wordsLeft = totalWords - wordsFromPara;
-                const speed = this.kokoroTTS.speed || 1;
-                const wpm = 150 * speed;
-                const minutesLeft = Math.max(1, Math.ceil(wordsLeft / wpm));
-                
-                if (wordsLeft > 0) {
-                    timeLeftEl.textContent = `~${minutesLeft} min left`;
-                } else {
-                    timeLeftEl.textContent = 'Finishing...';
+                    
+                    const speed = this.kokoroTTS.speed || 1;
+                    const wpm = 150 * speed;
+                    const minutesLeft = Math.max(1, Math.ceil(wordsLeft / wpm));
+                    
+                    if (wordsLeft > 0) {
+                        timeLeftEl.textContent = `~${minutesLeft} min left`;
+                    } else {
+                        timeLeftEl.textContent = 'Finishing...';
+                    }
                 }
             }
         }
+    }
+    
+    showTTSConsentSheet(options) {
+        let sheet = document.getElementById('tts-consent-sheet');
+        if (!sheet) {
+            sheet = document.createElement('div');
+            sheet.id = 'tts-consent-sheet';
+            sheet.className = 'tts-consent-sheet';
+            sheet.innerHTML = `
+                <div class="consent-content">
+                    <h3>Download Voice Model?</h3>
+                    <p id="consent-size">Download the neural voice model (<span class="consent-size-value">95 MB</span>) for high-quality speech.</p>
+                    <p class="consent-note">Downloads once and works offline. Using device voice until ready.</p>
+                    <div class="consent-actions">
+                        <button id="consent-download" class="primary-btn">Download</button>
+                        <button id="consent-system" class="secondary-btn">Use Device Voice</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(sheet);
+        }
+        
+        sheet.querySelector('.consent-size-value').textContent = `${options.sizeMB} MB`;
+        
+        const downloadBtn = sheet.querySelector('#consent-download');
+        const systemBtn = sheet.querySelector('#consent-system');
+        
+        const newDownloadBtn = downloadBtn.cloneNode(true);
+        const newSystemBtn = systemBtn.cloneNode(true);
+        downloadBtn.parentNode.replaceChild(newDownloadBtn, downloadBtn);
+        systemBtn.parentNode.replaceChild(newSystemBtn, systemBtn);
+        
+        newDownloadBtn.addEventListener('click', () => {
+            sheet.classList.remove('visible');
+            options.onDownload?.('standard');
+        });
+        
+        newSystemBtn.addEventListener('click', () => {
+            sheet.classList.remove('visible');
+            options.onUseSystem?.();
+        });
+        
+        sheet.classList.add('visible');
     }
     
     async updateTTSModelStatus() {
@@ -459,7 +506,15 @@ class FocusReadApp {
         bar?.classList.add('visible');
         bar?.setAttribute('aria-hidden', 'false');
         
-        this.updateTTSPositionInfo(index, this.paragraphs.length);
+        const totalParagraphs = this.paragraphs.length;
+        let wordsLeft = 0;
+        for (let i = index; i < this.paragraphs.length; i++) {
+            wordsLeft += this.paragraphs[i].split(/\s+/).filter(w => w).length;
+        }
+        const speed = this.kokoroTTS.speed || 1;
+        const estimatedMinutes = Math.max(1, Math.ceil(wordsLeft / (150 * speed)));
+        
+        this.updateTTSPositionInfo(index, totalParagraphs, estimatedMinutes);
         
         await this.kokoroTTS.startFromParagraph(index, this.paragraphs);
     }
@@ -845,6 +900,13 @@ class FocusReadApp {
         document.getElementById('search-btn').addEventListener('click', () => this.toggleSearch());
         document.getElementById('close-search').addEventListener('click', () => this.toggleSearch(false));
         document.getElementById('search-input').addEventListener('input', (e) => this.handleSearch(e.target.value));
+        
+        document.getElementById('reader-content').addEventListener('click', (e) => {
+            const searchPanel = document.getElementById('search-panel');
+            if (searchPanel.classList.contains('open') && !e.target.closest('#search-panel')) {
+                this.toggleSearch(false);
+            }
+        });
         
         document.getElementById('toc-btn').addEventListener('click', () => this.toggleTOC());
         document.getElementById('close-toc').addEventListener('click', () => this.toggleTOC(false));
@@ -1392,17 +1454,19 @@ class FocusReadApp {
         document.getElementById('font-size-value').textContent = `${newSize}px`;
     }
     
-    toggleSearch() {
+    toggleSearch(show) {
         const panel = document.getElementById('search-panel');
-        const isOpen = panel.classList.contains('open');
+        const isOpen = show !== undefined ? show : !panel.classList.contains('open');
         
         if (isOpen) {
-            panel.classList.remove('open');
-            panel.setAttribute('aria-hidden', 'true');
-        } else {
             panel.classList.add('open');
             panel.setAttribute('aria-hidden', 'false');
             document.getElementById('search-input').focus();
+        } else {
+            panel.classList.remove('open');
+            panel.setAttribute('aria-hidden', 'true');
+            document.getElementById('search-input').value = '';
+            document.getElementById('search-results').innerHTML = '';
         }
     }
     
@@ -1488,7 +1552,10 @@ class FocusReadApp {
         this.scrollToPosition();
     }
     
-    showView(view) {
+    async showView(view) {
+        this.toggleSearch(false);
+        this.toggleTOC(false);
+        
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         
         const viewEl = document.getElementById(`${view}-view`);
@@ -1510,6 +1577,11 @@ class FocusReadApp {
         if (view === 'library') {
             document.getElementById('current-book-title').textContent = 'FocusRead';
             this.stopKokoroTTS();
+            
+            if (this.currentBook) {
+                await this.saveReadingPosition();
+            }
+            await this.loadLibrary();
         }
         
         if (view === 'rsvp') {

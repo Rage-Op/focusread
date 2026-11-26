@@ -1,7 +1,8 @@
 /**
- * Kokoro TTS Module
+ * Kokoro TTS Module v7
  * High-quality text-to-speech using Kokoro-82M model via Web Worker
- * Falls back to Web Speech API if model unavailable
+ * Shows download consent before model download
+ * Falls back to Web Speech API immediately until model ready
  */
 
 const KOKORO_VOICES = [
@@ -15,11 +16,16 @@ const KOKORO_VOICES = [
     { id: 'bm_george', name: 'George (British)', gender: 'male' },
 ];
 
-const MODEL_CACHE_NAME = 'focusread-kokoro-model-v1';
+const MODEL_INFO = {
+    standard: { sizeMB: 95, name: 'Standard (95 MB)' },
+    high: { sizeMB: 170, name: 'High Quality (170 MB)' }
+};
+
 const DEFAULT_VOICE = 'af_heart';
 const SENTENCE_BUFFER_SIZE = 2;
-const MODEL_SIZE_MB = 300;
 const LOAD_TIMEOUT_MS = 60000;
+const STORAGE_KEY_CHOICE = 'focusread_tts_choice';
+const STORAGE_KEY_MODEL = 'focusread_tts_model';
 
 export class KokoroTTS {
     constructor() {
@@ -31,6 +37,8 @@ export class KokoroTTS {
         this.loadedMB = 0;
         this.useSystemVoices = false;
         this.forceSystemVoices = false;
+        this.userChoice = null;
+        this.preferredModel = 'standard';
         this.backend = 'wasm';
         this.fallbackReason = null;
         
@@ -63,12 +71,49 @@ export class KokoroTTS {
         this.onTimeUpdate = null;
         this.onLoadProgress = null;
         this.onEngineChange = null;
+        this.onNeedConsent = null;
         
         this.webSpeechUtterance = null;
         this.webSpeechSynth = window.speechSynthesis;
         
         this.loadTimeoutId = null;
         this.lastProgressTime = 0;
+        
+        this.loadUserChoice();
+    }
+    
+    loadUserChoice() {
+        try {
+            this.userChoice = localStorage.getItem(STORAGE_KEY_CHOICE);
+            this.preferredModel = localStorage.getItem(STORAGE_KEY_MODEL) || 'standard';
+        } catch (e) {
+            console.log('Could not load TTS preference');
+        }
+    }
+    
+    saveUserChoice(choice, model = 'standard') {
+        this.userChoice = choice;
+        this.preferredModel = model;
+        try {
+            localStorage.setItem(STORAGE_KEY_CHOICE, choice);
+            localStorage.setItem(STORAGE_KEY_MODEL, model);
+        } catch (e) {
+            console.log('Could not save TTS preference');
+        }
+    }
+    
+    getModelInfo() {
+        return {
+            isLoaded: this.isModelLoaded,
+            isCached: this.isModelCached,
+            isLoading: this.isLoading,
+            backend: this.backend,
+            engine: this.useSystemVoices ? 'system' : 'kokoro',
+            fallbackReason: this.fallbackReason,
+            modelSizeMB: MODEL_INFO[this.preferredModel]?.sizeMB || 95,
+            preferredModel: this.preferredModel,
+            userChoice: this.userChoice
+        };
     }
     
     getVoices() {
@@ -88,19 +133,53 @@ export class KokoroTTS {
         this.forceSystemVoices = force;
         if (force) {
             this.useSystemVoices = true;
+            this.saveUserChoice('system');
         }
         this.onEngineChange?.(this.getEngine());
     }
     
-    async checkDeviceCapability() {
-        if (this.forceSystemVoices) return false;
+    needsConsent() {
+        return !this.userChoice && !this.isModelLoaded && !this.isModelCached;
+    }
+    
+    async checkModelCached() {
+        if (!('caches' in window)) return { cached: false, size: 0 };
         
-        const memory = navigator.deviceMemory;
-        if (memory && memory < 4) {
-            return false;
+        try {
+            const cacheNames = await caches.keys();
+            const modelCaches = cacheNames.filter(name => 
+                name.includes('transformers') || name.includes('onnx')
+            );
+            
+            let totalSize = 0;
+            for (const cacheName of modelCaches) {
+                const cache = await caches.open(cacheName);
+                const keys = await cache.keys();
+                for (const request of keys) {
+                    const response = await cache.match(request);
+                    if (response) {
+                        const blob = await response.clone().blob();
+                        totalSize += blob.size;
+                    }
+                }
+            }
+            
+            const cached = totalSize > 10 * 1024 * 1024;
+            this.isModelCached = cached;
+            
+            if (cached && !this.userChoice) {
+                this.userChoice = 'kokoro';
+            }
+            
+            return {
+                cached,
+                size: totalSize,
+                sizeMB: Math.round(totalSize / (1024 * 1024))
+            };
+        } catch (e) {
+            console.error('Error checking model cache:', e);
+            return { cached: false, size: 0 };
         }
-        
-        return true;
     }
     
     initWorker() {
@@ -110,7 +189,7 @@ export class KokoroTTS {
         this.worker = new Worker(workerUrl, { type: 'module' });
         
         this.worker.onmessage = (event) => {
-            const { type, percent, message, loadedMB, totalMB, backend, error, id, wav } = event.data;
+            const { type, percent, message, loadedMB, totalMB, backend, error, id, wav, modelType } = event.data;
             
             switch (type) {
                 case 'progress':
@@ -128,8 +207,14 @@ export class KokoroTTS {
                     this.backend = backend || 'wasm';
                     this.fallbackReason = null;
                     this.clearLoadTimeout();
-                    this.onLoadProgress?.(100, 'Ready', MODEL_SIZE_MB, MODEL_SIZE_MB);
+                    
+                    const sizeMB = MODEL_INFO[this.preferredModel]?.sizeMB || 95;
+                    this.onLoadProgress?.(100, 'Ready', sizeMB, sizeMB);
                     this.onEngineChange?.('kokoro');
+                    
+                    if (this.isPlaying && !this.isPaused) {
+                        this.switchToKokoro();
+                    }
                     break;
                     
                 case 'error':
@@ -143,9 +228,6 @@ export class KokoroTTS {
                 case 'generate_error':
                     this.handleGenerationError(id, error);
                     break;
-                    
-                case 'pong':
-                    break;
             }
         };
         
@@ -158,10 +240,9 @@ export class KokoroTTS {
         console.error('Kokoro load error:', error);
         this.isLoading = false;
         this.clearLoadTimeout();
-        this.useSystemVoices = true;
-        this.fallbackReason = `Model failed to load: ${error}. Using system voices.`;
+        this.fallbackReason = `Model failed to load: ${error}. Using device voice.`;
         this.onEngineChange?.('system');
-        this.onLoadProgress?.(100, 'Using system voices (load failed)', 0, 0);
+        this.onLoadProgress?.(100, 'Using device voice', 0, 0);
     }
     
     handleGeneratedAudio(id, wavBuffer) {
@@ -172,7 +253,7 @@ export class KokoroTTS {
         
         this.audioContext.decodeAudioData(wavBuffer)
             .then((audioBuffer) => {
-                if (this.isPlaying) {
+                if (this.isPlaying && !this.useSystemVoices) {
                     this.audioQueue.push({
                         buffer: audioBuffer,
                         sentenceIndex: pending.sentenceIndex,
@@ -228,83 +309,29 @@ export class KokoroTTS {
         this.loadTimeoutId = setTimeout(checkProgress, 5000);
     }
     
-    async loadModel(onProgress) {
+    async loadModel() {
         if (this.isModelLoaded) return true;
         if (this.isLoading) return false;
         
-        const canUseKokoro = await this.checkDeviceCapability();
-        if (!canUseKokoro) {
-            this.useSystemVoices = true;
-            this.fallbackReason = 'Device does not meet requirements for Kokoro';
-            this.onEngineChange?.('system');
-            return true;
-        }
-        
         this.isLoading = true;
-        this.onLoadProgress?.(0, 'Starting...', 0, MODEL_SIZE_MB);
+        const sizeMB = MODEL_INFO[this.preferredModel]?.sizeMB || 95;
+        this.onLoadProgress?.(0, 'Starting download...', 0, sizeMB);
         
         try {
             this.initWorker();
             this.startLoadTimeout();
             
-            this.worker.postMessage({ type: 'load', voice: this.currentVoice });
-            
-            return new Promise((resolve) => {
-                const checkLoaded = setInterval(() => {
-                    if (this.isModelLoaded || this.useSystemVoices) {
-                        clearInterval(checkLoaded);
-                        resolve(true);
-                    }
-                }, 100);
-                
-                setTimeout(() => {
-                    clearInterval(checkLoaded);
-                    if (!this.isModelLoaded && !this.useSystemVoices) {
-                        this.handleLoadError('Load timeout');
-                    }
-                    resolve(true);
-                }, 180000);
+            this.worker.postMessage({ 
+                type: 'load', 
+                voice: this.currentVoice,
+                modelType: this.preferredModel
             });
+            
+            return true;
             
         } catch (error) {
             this.handleLoadError(error.message);
-            return true;
-        }
-    }
-    
-    async checkModelCached() {
-        if (!('caches' in window)) return { cached: false, size: 0 };
-        
-        try {
-            const cacheNames = await caches.keys();
-            const modelCaches = cacheNames.filter(name => 
-                name.includes('transformers') || name.includes('onnx')
-            );
-            
-            let totalSize = 0;
-            for (const cacheName of modelCaches) {
-                const cache = await caches.open(cacheName);
-                const keys = await cache.keys();
-                for (const request of keys) {
-                    const response = await cache.match(request);
-                    if (response) {
-                        const blob = await response.clone().blob();
-                        totalSize += blob.size;
-                    }
-                }
-            }
-            
-            const cached = totalSize > 10 * 1024 * 1024;
-            this.isModelCached = cached;
-            
-            return {
-                cached,
-                size: totalSize,
-                sizeMB: Math.round(totalSize / (1024 * 1024))
-            };
-        } catch (e) {
-            console.error('Error checking model cache:', e);
-            return { cached: false, size: 0 };
+            return false;
         }
     }
     
@@ -323,6 +350,11 @@ export class KokoroTTS {
             
             this.isModelLoaded = false;
             this.isModelCached = false;
+            this.userChoice = null;
+            
+            try {
+                localStorage.removeItem(STORAGE_KEY_CHOICE);
+            } catch (e) {}
             
             if (this.worker) {
                 this.worker.terminate();
@@ -334,18 +366,6 @@ export class KokoroTTS {
             console.error('Error deleting model cache:', e);
             return false;
         }
-    }
-    
-    getModelInfo() {
-        return {
-            isLoaded: this.isModelLoaded,
-            isCached: this.isModelCached,
-            isLoading: this.isLoading,
-            backend: this.backend,
-            engine: this.useSystemVoices ? 'system' : 'kokoro',
-            fallbackReason: this.fallbackReason,
-            modelSizeMB: MODEL_SIZE_MB
-        };
     }
     
     splitIntoSentences(text) {
@@ -380,6 +400,18 @@ export class KokoroTTS {
         });
     }
     
+    getEstimatedTime(fromParagraph = 0) {
+        if (this.paragraphs.length === 0) return 0;
+        
+        let totalWords = 0;
+        for (let i = fromParagraph; i < this.paragraphs.length; i++) {
+            totalWords += this.paragraphs[i].split(/\s+/).filter(w => w).length;
+        }
+        
+        const wpm = 150 * (this.speed || 1);
+        return Math.max(1, Math.ceil(totalWords / wpm));
+    }
+    
     async startFromParagraph(paragraphIndex, paragraphs) {
         this.stop();
         this.prepareParagraphs(paragraphs);
@@ -390,22 +422,58 @@ export class KokoroTTS {
         this.currentParagraphIndex = paragraphIndex;
         this.currentSentenceIndex = mapping.start;
         
-        if (!this.isModelLoaded && !this.useSystemVoices) {
-            const loaded = await this.loadModel();
-            if (!loaded) return;
-        }
-        
         this.isPlaying = true;
         this.isPaused = false;
         this.onPlayStateChange?.(true);
-        this.onParagraphChange?.(paragraphIndex, this.paragraphs.length);
+        this.onParagraphChange?.(paragraphIndex, this.paragraphs.length, this.getEstimatedTime(paragraphIndex));
         
-        if (this.useSystemVoices) {
-            this.playWithWebSpeech();
-        } else {
+        const cacheInfo = await this.checkModelCached();
+        
+        if (this.isModelLoaded) {
+            this.useSystemVoices = false;
             this.initAudioContext();
             this.generateAndPlay();
+        } else if (cacheInfo.cached && this.userChoice === 'kokoro') {
+            this.useSystemVoices = true;
+            this.playWithWebSpeech();
+            this.loadModel();
+        } else if (this.userChoice === 'kokoro') {
+            this.useSystemVoices = true;
+            this.playWithWebSpeech();
+            this.loadModel();
+        } else if (this.userChoice === 'system') {
+            this.useSystemVoices = true;
+            this.playWithWebSpeech();
+        } else {
+            this.useSystemVoices = true;
+            this.playWithWebSpeech();
+            
+            const sizeMB = MODEL_INFO[this.preferredModel]?.sizeMB || 95;
+            this.onNeedConsent?.({
+                sizeMB,
+                modelName: MODEL_INFO[this.preferredModel]?.name || 'Standard',
+                onDownload: (model = 'standard') => {
+                    this.saveUserChoice('kokoro', model);
+                    this.preferredModel = model;
+                    this.loadModel();
+                },
+                onUseSystem: () => {
+                    this.saveUserChoice('system');
+                }
+            });
         }
+    }
+    
+    switchToKokoro() {
+        if (!this.isModelLoaded || !this.isPlaying) return;
+        
+        this.webSpeechSynth.cancel();
+        this.useSystemVoices = false;
+        
+        this.initAudioContext();
+        this.generateAndPlay();
+        
+        this.onEngineChange?.('kokoro');
     }
     
     initAudioContext() {
@@ -418,13 +486,13 @@ export class KokoroTTS {
     }
     
     generateAndPlay() {
-        if (!this.isPlaying || this.isPaused) return;
-        
+        if (!this.isPlaying || this.isPaused || this.useSystemVoices) return;
         this.generateNext();
     }
     
     generateNext() {
-        if (!this.isPlaying || this.isPaused) return;
+        if (!this.isPlaying || this.isPaused || this.useSystemVoices) return;
+        if (!this.worker || !this.isModelLoaded) return;
         
         while (this.pendingGenerations.size < SENTENCE_BUFFER_SIZE && 
                this.audioQueue.length + this.pendingGenerations.size < SENTENCE_BUFFER_SIZE * 2) {
@@ -461,7 +529,7 @@ export class KokoroTTS {
     }
     
     playNextInQueue() {
-        if (!this.isPlaying || this.isPaused || this.audioQueue.length === 0) return;
+        if (!this.isPlaying || this.isPaused || this.audioQueue.length === 0 || this.useSystemVoices) return;
         
         const item = this.audioQueue.shift();
         const sentence = this.sentences[item.sentenceIndex];
@@ -472,7 +540,7 @@ export class KokoroTTS {
         
         if (sentence.paragraphIndex !== this.currentParagraphIndex) {
             this.currentParagraphIndex = sentence.paragraphIndex;
-            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length, this.getEstimatedTime(this.currentParagraphIndex));
         }
         this.onSentenceChange?.(item.sentenceIndex, sentence.text);
         
@@ -484,7 +552,7 @@ export class KokoroTTS {
         this.currentSource.onended = () => {
             this.currentSource = null;
             
-            if (this.isPlaying && !this.isPaused) {
+            if (this.isPlaying && !this.isPaused && !this.useSystemVoices) {
                 if (this.currentSentenceIndex < this.sentences.length - 1) {
                     this.playNextInQueue();
                     this.generateNext();
@@ -499,12 +567,12 @@ export class KokoroTTS {
     }
     
     updateTime() {
-        if (!this.isPlaying || this.isPaused || !this.audioContext) return;
+        if (!this.isPlaying || this.isPaused || !this.audioContext || this.useSystemVoices) return;
         
         const elapsed = (this.audioContext.currentTime - this.startTime) * this.speed;
         this.onTimeUpdate?.(elapsed, this.currentDuration);
         
-        if (this.isPlaying && !this.isPaused) {
+        if (this.isPlaying && !this.isPaused && !this.useSystemVoices) {
             requestAnimationFrame(() => this.updateTime());
         }
     }
@@ -520,7 +588,7 @@ export class KokoroTTS {
         
         if (sentence.paragraphIndex !== this.currentParagraphIndex) {
             this.currentParagraphIndex = sentence.paragraphIndex;
-            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length, this.getEstimatedTime(this.currentParagraphIndex));
         }
         this.onSentenceChange?.(this.currentSentenceIndex, sentence.text);
         
@@ -536,6 +604,11 @@ export class KokoroTTS {
         
         this.webSpeechUtterance.onend = () => {
             if (this.isPlaying && !this.isPaused) {
+                if (this.isModelLoaded && this.userChoice === 'kokoro') {
+                    this.switchToKokoro();
+                    return;
+                }
+                
                 this.currentSentenceIndex++;
                 if (this.currentSentenceIndex < this.sentences.length) {
                     this.playWithWebSpeech();
@@ -609,6 +682,7 @@ export class KokoroTTS {
     
     nextParagraph() {
         if (this.currentParagraphIndex < this.paragraphs.length - 1) {
+            const wasUsingSystem = this.useSystemVoices;
             this.stop();
             this.currentParagraphIndex++;
             
@@ -617,8 +691,9 @@ export class KokoroTTS {
             
             this.isPlaying = true;
             this.isPaused = false;
+            this.useSystemVoices = wasUsingSystem || !this.isModelLoaded;
             this.onPlayStateChange?.(true);
-            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length, this.getEstimatedTime(this.currentParagraphIndex));
             
             if (this.useSystemVoices) {
                 this.playWithWebSpeech();
@@ -630,6 +705,7 @@ export class KokoroTTS {
     
     previousParagraph() {
         if (this.currentParagraphIndex > 0) {
+            const wasUsingSystem = this.useSystemVoices;
             this.stop();
             this.currentParagraphIndex--;
             
@@ -638,8 +714,9 @@ export class KokoroTTS {
             
             this.isPlaying = true;
             this.isPaused = false;
+            this.useSystemVoices = wasUsingSystem || !this.isModelLoaded;
             this.onPlayStateChange?.(true);
-            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length);
+            this.onParagraphChange?.(this.currentParagraphIndex, this.paragraphs.length, this.getEstimatedTime(this.currentParagraphIndex));
             
             if (this.useSystemVoices) {
                 this.playWithWebSpeech();
@@ -660,7 +737,7 @@ export class KokoroTTS {
             this.currentSource.playbackRate.value = this.speed;
         }
         
-        if (this.webSpeechUtterance) {
+        if (this.webSpeechUtterance && this.useSystemVoices) {
             this.webSpeechSynth.cancel();
             this.playWithWebSpeech();
         }
@@ -682,7 +759,8 @@ export class KokoroTTS {
             speed: this.speed,
             isModelLoaded: this.isModelLoaded,
             isLoading: this.isLoading,
-            loadProgress: this.loadProgress
+            loadProgress: this.loadProgress,
+            userChoice: this.userChoice
         };
     }
 }
