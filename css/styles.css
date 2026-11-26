@@ -1971,6 +1971,20 @@ input[type="range"] {
     width: 100%;
     margin-top: var(--spacing-sm);
     display: flex;
+    transition: opacity 0.2s ease;
+}
+
+#delete-tts-model:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background: var(--bg-tertiary);
+    border-color: var(--border);
+    color: var(--text-muted);
+}
+
+#delete-tts-model:disabled:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--border);
     align-items: center;
     justify-content: center;
     gap: var(--spacing-xs);
@@ -2181,6 +2195,28 @@ body.tts-active .back-btn {
 @keyframes pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+}
+
+.update-toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%) translateY(100px);
+    background: var(--success);
+    color: white;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    z-index: 10000;
+    opacity: 0;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.update-toast.visible {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
 }
 
 .sync-progress-row {
