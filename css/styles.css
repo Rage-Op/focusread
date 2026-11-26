@@ -753,6 +753,15 @@ body {
 
 .text-container .bionic-word strong {
     font-weight: var(--bionic-weight);
+    color: var(--text-primary);
+}
+
+.text-container .bionic-word {
+    display: inline;
+}
+
+.paragraph-text strong {
+    font-weight: 700;
 }
 
 .focus-ruler {
@@ -2217,6 +2226,64 @@ body.tts-active .back-btn {
 .update-toast.visible {
     transform: translateX(-50%) translateY(0);
     opacity: 1;
+}
+
+.tts-consent-sheet {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: var(--spacing-md);
+    max-width: 320px;
+    width: calc(100% - 32px);
+    z-index: 1001;
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.tts-consent-sheet.visible {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.consent-content h3 {
+    margin: 0 0 var(--spacing-sm);
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.consent-content p {
+    margin: 0 0 var(--spacing-sm);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.consent-content .consent-note {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: var(--spacing-md);
+}
+
+.consent-size-value {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.consent-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.consent-actions button {
+    flex: 1;
+    padding: var(--spacing-sm);
+    font-size: 0.85rem;
 }
 
 .sync-progress-row {
