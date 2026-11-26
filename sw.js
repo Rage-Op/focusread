@@ -1,9 +1,9 @@
 /**
- * Service Worker for FocusRead PWA v9
+ * Service Worker for FocusRead PWA v10
  * Network-first for app files, cache fallback for offline
  */
 
-const CACHE_NAME = 'focusread-v9';
+const CACHE_NAME = 'focusread-v10';
 
 const APP_FILES = [
     './',
