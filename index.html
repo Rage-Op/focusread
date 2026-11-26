@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <meta name="description" content="ADHD-friendly PDF book reader with bionic reading and RSVP speed reading">
+    <meta name="theme-color" content="#4a90d9">
+    <title>FocusRead - ADHD Book Reader</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:wght@400;600;700&family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.cdnfonts.com/css/opendyslexic" rel="stylesheet">
+    
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <!-- PIN Lock Screen -->
+    <div id="pin-screen" class="screen active" role="dialog" aria-labelledby="pin-title" aria-modal="true">
+        <div class="pin-container">
+            <h1 id="pin-title">📖 FocusRead</h1>
+            <p id="pin-subtitle" class="pin-subtitle">Enter your PIN to unlock</p>
+            
+            <div class="pin-display" aria-live="polite" aria-label="PIN entry">
+                <span class="pin-dot" data-filled="false"></span>
+                <span class="pin-dot" data-filled="false"></span>
+                <span class="pin-dot" data-filled="false"></span>
+                <span class="pin-dot" data-filled="false"></span>
+            </div>
+            
+            <div class="pin-error" id="pin-error" role="alert" aria-live="assertive"></div>
+            
+            <div class="pin-keypad" role="group" aria-label="PIN keypad">
+                <button class="pin-key" data-key="1" aria-label="1">1</button>
+                <button class="pin-key" data-key="2" aria-label="2">2</button>
+                <button class="pin-key" data-key="3" aria-label="3">3</button>
+                <button class="pin-key" data-key="4" aria-label="4">4</button>
+                <button class="pin-key" data-key="5" aria-label="5">5</button>
+                <button class="pin-key" data-key="6" aria-label="6">6</button>
+                <button class="pin-key" data-key="7" aria-label="7">7</button>
+                <button class="pin-key" data-key="8" aria-label="8">8</button>
+                <button class="pin-key" data-key="9" aria-label="9">9</button>
+                <button class="pin-key pin-key-action" id="forgot-pin-btn" aria-label="Forgot PIN">?</button>
+                <button class="pin-key" data-key="0" aria-label="0">0</button>
+                <button class="pin-key pin-key-action" id="pin-backspace" aria-label="Delete">⌫</button>
+            </div>
+            
+            <p class="pin-note">Privacy lock — not real security</p>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" class="screen" role="main">
+        <!-- Header -->
+        <header class="app-header" role="banner">
+            <div class="header-left">
+                <button id="menu-btn" class="icon-btn" aria-label="Open menu" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h18M3 6h18M3 18h18"/>
+                    </svg>
+                </button>
+                <h1 class="app-title" id="current-book-title">FocusRead</h1>
+            </div>
+            <div class="header-right">
+                <button id="search-btn" class="icon-btn" aria-label="Search in book">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                    </svg>
+                </button>
+                <button id="toc-btn" class="icon-btn" aria-label="Table of contents">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
+                    </svg>
+                </button>
+                <button id="settings-btn" class="icon-btn" aria-label="Settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+                <button id="lock-btn" class="icon-btn" aria-label="Lock app">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <!-- Sidebar Menu -->
+        <aside id="sidebar" class="sidebar" role="navigation" aria-label="Main navigation" aria-hidden="true">
+            <div class="sidebar-header">
+                <h2>📖 FocusRead</h2>
+                <button id="close-sidebar" class="icon-btn" aria-label="Close menu">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <nav class="sidebar-nav">
+                <button id="nav-library" class="nav-item active" aria-current="page">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+                    </svg>
+                    Library
+                </button>
+                <button id="nav-import" class="nav-item">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    Import PDF
+                </button>
+            </nav>
+        </aside>
+        <div id="sidebar-overlay" class="sidebar-overlay" aria-hidden="true"></div>
+
+        <!-- Library View -->
+        <section id="library-view" class="view active" aria-labelledby="library-heading">
+            <div class="library-container">
+                <h2 id="library-heading" class="visually-hidden">Your Library</h2>
+                
+                <div id="empty-library" class="empty-state">
+                    <div class="empty-icon">📚</div>
+                    <h3>Your library is empty</h3>
+                    <p>Import a PDF to start reading with focus</p>
+                    <button id="import-btn-empty" class="primary-btn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        Import PDF
+                    </button>
+                </div>
+                
+                <div id="book-grid" class="book-grid" role="list" aria-label="Your books"></div>
+            </div>
+        </section>
+
+        <!-- Reader View -->
+        <section id="reader-view" class="view" aria-labelledby="reader-heading">
+            <h2 id="reader-heading" class="visually-hidden">Reading View</h2>
+            
+            <!-- Reading Controls -->
+            <div class="reader-controls" role="toolbar" aria-label="Reading controls">
+                <div class="control-group">
+                    <button id="bionic-toggle" class="control-btn" aria-pressed="false" title="Toggle Bionic Reading">
+                        <span class="bionic-icon"><strong>Bi</strong>onic</span>
+                    </button>
+                    <button id="rsvp-toggle" class="control-btn" aria-pressed="false" title="Speed Reading Mode">
+                        RSVP
+                    </button>
+                    <button id="tts-toggle" class="control-btn" aria-pressed="false" title="Read Aloud">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="control-group">
+                    <button id="font-decrease" class="control-btn" aria-label="Decrease font size">A−</button>
+                    <button id="font-increase" class="control-btn" aria-label="Increase font size">A+</button>
+                </div>
+            </div>
+
+            <!-- Reading Progress -->
+            <div class="progress-container" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                <div class="progress-bar" id="reading-progress"></div>
+            </div>
+            <div class="progress-info">
+                <span id="progress-percent">0%</span>
+                <span id="time-left">— min left</span>
+            </div>
+
+            <!-- Main Reading Area -->
+            <div id="reader-content" class="reader-content" tabindex="0" role="article">
+                <div id="focus-ruler" class="focus-ruler" aria-hidden="true"></div>
+                <div id="text-container" class="text-container"></div>
+            </div>
+
+            <!-- Back to Library -->
+            <button id="back-to-library" class="back-btn" aria-label="Back to library">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                </svg>
+            </button>
+        </section>
+
+        <!-- RSVP View -->
+        <section id="rsvp-view" class="view" aria-labelledby="rsvp-heading">
+            <h2 id="rsvp-heading" class="visually-hidden">Speed Reading Mode</h2>
+            
+            <div class="rsvp-container">
+                <div class="rsvp-word-container">
+                    <div class="rsvp-guides">
+                        <div class="rsvp-guide-top"></div>
+                        <div class="rsvp-guide-bottom"></div>
+                    </div>
+                    <div id="rsvp-word" class="rsvp-word" aria-live="polite" aria-atomic="true">
+                        <span class="rsvp-before"></span>
+                        <span class="rsvp-orp"></span>
+                        <span class="rsvp-after"></span>
+                    </div>
+                </div>
+                
+                <div class="rsvp-progress">
+                    <span id="rsvp-word-count">0/0</span>
+                    <span id="rsvp-time-left">0:00</span>
+                </div>
+                
+                <div class="rsvp-controls" role="toolbar" aria-label="Speed reading controls">
+                    <div class="rsvp-control-row">
+                        <button id="rsvp-prev-sentence" class="rsvp-btn" aria-label="Previous sentence" title="Previous sentence">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="11 17 6 12 11 7"/><polyline points="18 17 13 12 18 7"/>
+                            </svg>
+                        </button>
+                        <button id="rsvp-prev-word" class="rsvp-btn" aria-label="Previous word" title="Previous word">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="15 18 9 12 15 6"/>
+                            </svg>
+                        </button>
+                        <button id="rsvp-play" class="rsvp-btn rsvp-play-btn" aria-label="Play" title="Play (Space)">
+                            <svg class="play-icon" viewBox="0 0 24 24" fill="currentColor">
+                                <polygon points="5 3 19 12 5 21 5 3"/>
+                            </svg>
+                            <svg class="pause-icon" viewBox="0 0 24 24" fill="currentColor" style="display:none">
+                                <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                            </svg>
+                        </button>
+                        <button id="rsvp-next-word" class="rsvp-btn" aria-label="Next word" title="Next word">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="9 18 15 12 9 6"/>
+                            </svg>
+                        </button>
+                        <button id="rsvp-next-sentence" class="rsvp-btn" aria-label="Next sentence" title="Next sentence">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/>
+                            </svg>
+                        </button>
+                    </div>
+                    
+                    <div class="rsvp-speed-control">
+                        <label for="rsvp-speed">Speed: <span id="rsvp-wpm">300</span> WPM</label>
+                        <input type="range" id="rsvp-speed" min="100" max="1000" value="300" step="25" aria-label="Reading speed">
+                        <div class="speed-presets">
+                            <button class="preset-btn" data-wpm="150">Slow</button>
+                            <button class="preset-btn" data-wpm="300">Normal</button>
+                            <button class="preset-btn" data-wpm="450">Fast</button>
+                            <button class="preset-btn" data-wpm="600">Rapid</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="rsvp-close" class="rsvp-close-btn" aria-label="Exit speed reading">
+                    Exit RSVP
+                </button>
+            </div>
+        </section>
+
+        <!-- Settings Panel -->
+        <aside id="settings-panel" class="settings-panel" role="dialog" aria-labelledby="settings-title" aria-hidden="true">
+            <div class="settings-header">
+                <h2 id="settings-title">Settings</h2>
+                <button id="close-settings" class="icon-btn" aria-label="Close settings">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="settings-content">
+                <!-- Theme -->
+                <div class="settings-section">
+                    <h3>Theme</h3>
+                    <div class="theme-options" role="radiogroup" aria-label="Color theme">
+                        <button class="theme-btn" data-theme="system" aria-pressed="true">
+                            <span class="theme-preview theme-system"></span>
+                            Auto
+                        </button>
+                        <button class="theme-btn" data-theme="light" aria-pressed="false">
+                            <span class="theme-preview theme-light"></span>
+                            Light
+                        </button>
+                        <button class="theme-btn" data-theme="dark" aria-pressed="false">
+                            <span class="theme-preview theme-dark"></span>
+                            Dark
+                        </button>
+                        <button class="theme-btn" data-theme="sepia" aria-pressed="false">
+                            <span class="theme-preview theme-sepia"></span>
+                            Sepia
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Font -->
+                <div class="settings-section">
+                    <h3>Font</h3>
+                    <select id="font-family" aria-label="Font family">
+                        <option value="system">System Default</option>
+                        <option value="atkinson">Atkinson Hyperlegible</option>
+                        <option value="opendyslexic">OpenDyslexic</option>
+                        <option value="lexend">Lexend</option>
+                        <option value="opensans">Open Sans</option>
+                    </select>
+                </div>
+
+                <!-- Font Size -->
+                <div class="settings-section">
+                    <h3>Font Size</h3>
+                    <div class="slider-control">
+                        <input type="range" id="font-size" min="14" max="32" value="18" aria-label="Font size">
+                        <span id="font-size-value">18px</span>
+                    </div>
+                </div>
+
+                <!-- Line Height -->
+                <div class="settings-section">
+                    <h3>Line Height</h3>
+                    <div class="slider-control">
+                        <input type="range" id="line-height" min="1.2" max="2.5" value="1.8" step="0.1" aria-label="Line height">
+                        <span id="line-height-value">1.8</span>
+                    </div>
+                </div>
+
+                <!-- Letter Spacing -->
+                <div class="settings-section">
+                    <h3>Letter Spacing</h3>
+                    <div class="slider-control">
+                        <input type="range" id="letter-spacing" min="0" max="0.2" value="0" step="0.01" aria-label="Letter spacing">
+                        <span id="letter-spacing-value">0em</span>
+                    </div>
+                </div>
+
+                <!-- Word Spacing -->
+                <div class="settings-section">
+                    <h3>Word Spacing</h3>
+                    <div class="slider-control">
+                        <input type="range" id="word-spacing" min="0" max="0.5" value="0" step="0.05" aria-label="Word spacing">
+                        <span id="word-spacing-value">0em</span>
+                    </div>
+                </div>
+
+                <!-- Max Line Width -->
+                <div class="settings-section">
+                    <h3>Max Line Width</h3>
+                    <div class="slider-control">
+                        <input type="range" id="max-width" min="400" max="1000" value="700" step="50" aria-label="Maximum line width">
+                        <span id="max-width-value">700px</span>
+                    </div>
+                </div>
+
+                <!-- Text Alignment -->
+                <div class="settings-section">
+                    <h3>Text Alignment</h3>
+                    <div class="align-options" role="radiogroup" aria-label="Text alignment">
+                        <button class="align-btn" data-align="left" aria-pressed="true">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="17" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="17" y1="18" x2="3" y2="18"/>
+                            </svg>
+                        </button>
+                        <button class="align-btn" data-align="justify" aria-pressed="false">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="21" y1="10" x2="3" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="3" y2="18"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Bionic Reading -->
+                <div class="settings-section">
+                    <h3>Bionic Reading</h3>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="bionic-enabled">
+                        <span class="toggle-switch"></span>
+                        Enable Bionic Reading
+                    </label>
+                    <div class="slider-control">
+                        <label for="bionic-strength">Fixation Strength</label>
+                        <input type="range" id="bionic-strength" min="1" max="5" value="3" aria-label="Bionic fixation strength">
+                        <span id="bionic-strength-value">3</span>
+                    </div>
+                </div>
+
+                <!-- Focus Ruler -->
+                <div class="settings-section">
+                    <h3>Focus Aids</h3>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="focus-ruler-enabled">
+                        <span class="toggle-switch"></span>
+                        Reading Line Highlight
+                    </label>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="high-contrast">
+                        <span class="toggle-switch"></span>
+                        High Contrast
+                    </label>
+                </div>
+
+                <!-- Text-to-Speech -->
+                <div class="settings-section">
+                    <h3>Text-to-Speech</h3>
+                    <select id="tts-voice" aria-label="Voice selection">
+                        <option value="">Default Voice</option>
+                    </select>
+                    <div class="slider-control">
+                        <label for="tts-rate">Speech Rate</label>
+                        <input type="range" id="tts-rate" min="0.5" max="2" value="1" step="0.1" aria-label="Speech rate">
+                        <span id="tts-rate-value">1x</span>
+                    </div>
+                </div>
+
+                <!-- Accessibility -->
+                <div class="settings-section">
+                    <h3>Accessibility</h3>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="reduced-motion">
+                        <span class="toggle-switch"></span>
+                        Reduced Motion
+                    </label>
+                </div>
+
+                <!-- Reset -->
+                <div class="settings-section">
+                    <button id="reset-settings" class="secondary-btn">Reset to Defaults</button>
+                </div>
+            </div>
+        </aside>
+        <div id="settings-overlay" class="settings-overlay" aria-hidden="true"></div>
+
+        <!-- Search Panel -->
+        <aside id="search-panel" class="search-panel" role="search" aria-hidden="true">
+            <div class="search-header">
+                <input type="search" id="search-input" placeholder="Search in book..." aria-label="Search in book">
+                <button id="close-search" class="icon-btn" aria-label="Close search">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="search-results" class="search-results" role="listbox" aria-label="Search results"></div>
+        </aside>
+
+        <!-- Table of Contents Panel -->
+        <aside id="toc-panel" class="toc-panel" role="navigation" aria-labelledby="toc-title" aria-hidden="true">
+            <div class="toc-header">
+                <h2 id="toc-title">Contents</h2>
+                <button id="close-toc" class="icon-btn" aria-label="Close table of contents">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 6 6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="toc-content" class="toc-content" role="list" aria-label="Table of contents"></div>
+        </aside>
+        <div id="toc-overlay" class="toc-overlay" aria-hidden="true"></div>
+
+        <!-- Import Progress Modal -->
+        <div id="import-modal" class="modal" role="dialog" aria-labelledby="import-title" aria-hidden="true">
+            <div class="modal-content">
+                <h2 id="import-title">Importing PDF</h2>
+                <p id="import-status">Extracting text...</p>
+                <div class="import-progress">
+                    <div class="import-progress-bar" id="import-progress-bar"></div>
+                </div>
+                <p id="import-pages">Page 0 of 0</p>
+                <button id="cancel-import" class="secondary-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Hidden file input -->
+        <input type="file" id="pdf-input" accept=".pdf" aria-hidden="true" style="display:none">
+    </div>
+
+    <!-- PDF.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+    
+    <!-- App Scripts -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
