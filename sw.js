@@ -1,9 +1,9 @@
 /**
- * Service Worker for FocusRead PWA v6
+ * Service Worker for FocusRead PWA v9
  * Network-first for app files, cache fallback for offline
  */
 
-const CACHE_NAME = 'focusread-v7';
+const CACHE_NAME = 'focusread-v9';
 
 const APP_FILES = [
     './',
@@ -22,6 +22,7 @@ const APP_FILES = [
     './js/search.js',
     './js/firebase-config.js',
     './js/firebase-sync.js',
+    './js/highlighter.js',
     './manifest.json'
 ];
 

@@ -5,6 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="description" content="ADHD-friendly PDF book reader with bionic reading and RSVP speed reading">
     <meta name="theme-color" content="#4a90d9">
+    
+    <!-- Cache Control for GitHub Pages -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    
     <title>FocusRead - ADHD Book Reader</title>
     
     <link rel="manifest" href="manifest.json">
@@ -16,7 +22,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:wght@400;600;700&family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.cdnfonts.com/css/opendyslexic" rel="stylesheet">
     
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=9">
 </head>
 <body>
     <!-- PIN Lock Screen -->
@@ -225,6 +231,24 @@
                 <div class="control-group">
                     <button id="font-decrease" class="control-btn" aria-label="Decrease font size">A−</button>
                     <button id="font-increase" class="control-btn" aria-label="Increase font size">A+</button>
+                </div>
+                <div class="control-group">
+                    <button id="highlights-toggle" class="control-btn" aria-label="Highlights" title="View Highlights (H)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 20h9M9.5 3H4a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1h5.5L19 3l-9.5 7Z"/>
+                            <path d="M9.5 10 4 16v4h4l5.5-5.5"/>
+                        </svg>
+                    </button>
+                    <button id="toc-toggle" class="control-btn" aria-label="Table of Contents" title="Table of Contents">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="8" y1="6" x2="21" y2="6"/>
+                            <line x1="8" y1="12" x2="21" y2="12"/>
+                            <line x1="8" y1="18" x2="21" y2="18"/>
+                            <line x1="3" y1="6" x2="3.01" y2="6"/>
+                            <line x1="3" y1="12" x2="3.01" y2="12"/>
+                            <line x1="3" y1="18" x2="3.01" y2="18"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
 
@@ -493,12 +517,20 @@
                             <span class="model-status-label">Backend:</span>
                             <span class="model-status-value" id="tts-model-backend-text">—</span>
                         </div>
-                        <button id="delete-tts-model" class="secondary-btn danger-btn" disabled>
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                            </svg>
-                            Delete downloaded model
-                        </button>
+                        <div class="tts-model-buttons">
+                            <button id="download-tts-model" class="primary-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                                </svg>
+                                <span id="download-tts-model-text">Download voice model (95 MB)</span>
+                            </button>
+                            <button id="delete-tts-model" class="secondary-btn danger-btn" disabled>
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                                </svg>
+                                <span>Delete downloaded model</span>
+                            </button>
+                        </div>
                     </div>
                     
                     <label class="toggle-label">
@@ -725,6 +757,20 @@
                 <button id="cancel-delete-btn" class="secondary-btn">Cancel</button>
             </div>
         </div>
+
+        <!-- Rename Book Modal -->
+        <div id="rename-modal" class="modal" role="dialog" aria-labelledby="rename-title" aria-hidden="true">
+            <div class="modal-content rename-modal-content">
+                <h2 id="rename-title">Rename Book</h2>
+                <div class="rename-form">
+                    <input type="text" id="rename-input" class="rename-input" placeholder="Enter book title" maxlength="200" aria-label="Book title">
+                </div>
+                <div class="modal-actions">
+                    <button id="cancel-rename-btn" class="secondary-btn">Cancel</button>
+                    <button id="confirm-rename-btn" class="primary-btn">Save</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- PDF.js -->
@@ -734,6 +780,6 @@
     </script>
     
     <!-- App Scripts -->
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="js/app.js?v=9"></script>
 </body>
 </html>
