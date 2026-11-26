@@ -31,14 +31,20 @@ export class PinManager {
     getPinData() {
         const hash = localStorage.getItem('focusread_pin_hash');
         const salt = localStorage.getItem('focusread_pin_salt');
-        const updatedAt = parseInt(localStorage.getItem('focusread_pin_updated') || '0');
-        return hash && salt ? { hash, salt, updatedAt } : null;
+        const changedAt = parseInt(localStorage.getItem('focusread_pin_changed') || '0');
+        return hash && salt ? { hash, salt, changedAt } : null;
     }
     
-    setPinData(hash, salt, updatedAt) {
+    setPinData(hash, salt, changedAt) {
         localStorage.setItem('focusread_pin_hash', hash);
         localStorage.setItem('focusread_pin_salt', salt);
-        localStorage.setItem('focusread_pin_updated', updatedAt.toString());
+        localStorage.setItem('focusread_pin_changed', changedAt.toString());
+    }
+    
+    clearPinData() {
+        localStorage.removeItem('focusread_pin_hash');
+        localStorage.removeItem('focusread_pin_salt');
+        localStorage.removeItem('focusread_pin_changed');
     }
     
     bindEvents(onSuccess, onError) {
@@ -193,13 +199,13 @@ export class PinManager {
     async savePin(pin) {
         const salt = this.generateSalt();
         const hash = await this.hashPin(pin, salt);
-        const updatedAt = Date.now();
+        const changedAt = Date.now();
         
         localStorage.setItem('focusread_pin_hash', hash);
         localStorage.setItem('focusread_pin_salt', salt);
-        localStorage.setItem('focusread_pin_updated', updatedAt.toString());
+        localStorage.setItem('focusread_pin_changed', changedAt.toString());
         
-        return { hash, salt, updatedAt };
+        return { hash, salt, changedAt };
     }
     
     async verifyPin(pin) {

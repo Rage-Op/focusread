@@ -28,6 +28,7 @@ class FocusReadApp {
         this.search = new SearchManager();
         this.firebase = new FirebaseSync();
         this.highlighter = null;
+        this.isChangingPin = false;
         
         this.currentBook = null;
         this.words = [];
@@ -60,6 +61,23 @@ class FocusReadApp {
                 location.reload();
             }, 500);
         }
+    }
+    
+    showErrorToast(message, duration = 5000) {
+        let toast = document.getElementById('error-toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'error-toast';
+            toast.className = 'error-toast';
+            document.body.appendChild(toast);
+        }
+        
+        toast.textContent = message;
+        toast.classList.add('visible');
+        
+        setTimeout(() => {
+            toast.classList.remove('visible');
+        }, duration);
     }
     
     async init() {
@@ -675,13 +693,23 @@ class FocusReadApp {
                 case 'error':
                     text.textContent = 'Sync error';
                     break;
-                default:
+                case 'pending':
+                    text.textContent = 'Pending';
+                    break;
+                case 'idle':
                     text.textContent = 'Synced';
+                    break;
+                default:
+                    text.textContent = lastSyncTime ? 'Synced' : 'Not synced';
             }
         }
         
-        if (lastTimeEl && lastSyncTime) {
-            lastTimeEl.textContent = this.formatLastSyncTime(lastSyncTime);
+        if (lastTimeEl) {
+            if (lastSyncTime) {
+                lastTimeEl.textContent = this.formatLastSyncTime(lastSyncTime);
+            } else {
+                lastTimeEl.textContent = 'Never';
+            }
         }
         
         if (status === 'idle' && progressRow) {
@@ -939,6 +967,80 @@ class FocusReadApp {
         this.loadLibrary({ skipAutoOpen: true });
     }
     
+    async reformatBook(book) {
+        const confirmed = confirm(
+            `Reformat "${book.title}"?\n\n` +
+            'This will re-analyze the book text to detect headings, paragraphs, and formatting.\n\n' +
+            'Note: Since the original PDF is not stored, this uses heuristic analysis of the existing text.'
+        );
+        
+        if (!confirmed) return;
+        
+        try {
+            const fullBook = await this.storage.getBook(book.id);
+            if (!fullBook) {
+                this.showErrorToast('Book not found');
+                return;
+            }
+            
+            const structure = this.analyzeTextStructure(fullBook.paragraphs);
+            fullBook.structure = structure;
+            fullBook.updatedAt = Date.now();
+            
+            await this.storage.updateBook(fullBook);
+            
+            if (this.currentBook && this.currentBook.id === book.id) {
+                this.currentBook.structure = structure;
+                this.structure = structure;
+                this.renderText();
+            }
+            
+            this.showErrorToast('Book reformatted successfully');
+            this.loadLibrary({ skipAutoOpen: true });
+            
+        } catch (error) {
+            console.error('Reformat error:', error);
+            this.showErrorToast(`Reformat failed: ${error.message}`);
+        }
+    }
+    
+    analyzeTextStructure(paragraphs) {
+        const structure = [];
+        
+        for (let i = 0; i < paragraphs.length; i++) {
+            const text = paragraphs[i].trim();
+            const info = { type: 'paragraph' };
+            
+            if (/^(chapter|part|section|book|act|scene)\s+(\d+|[ivxlc]+)/i.test(text)) {
+                info.type = 'heading';
+                info.headingLevel = 1;
+                info.isBold = true;
+            } else if (/^(\d+\.|\d+\)|\*|•|–|—|-)\s/.test(text)) {
+                info.type = 'list';
+            } else if (text.length < 80 && text.length > 0 && 
+                       text === text.toUpperCase() && /[A-Z]/.test(text)) {
+                info.type = 'heading';
+                info.headingLevel = 2;
+                info.isBold = true;
+            } else if (text.length < 60 && text.length > 0 && 
+                       !text.endsWith('.') && !text.endsWith(',') && 
+                       !text.endsWith('?') && !text.endsWith('!')) {
+                const wordCount = text.split(/\s+/).length;
+                if (wordCount <= 10) {
+                    info.type = 'heading';
+                    info.headingLevel = 3;
+                }
+            } else if (text.startsWith('"') || text.startsWith('"') || 
+                       text.startsWith('    ') || text.startsWith('\t')) {
+                info.type = 'blockquote';
+            }
+            
+            structure.push(info);
+        }
+        
+        return structure;
+    }
+    
     async syncPinWithCloud() {
         if (!this.firebase.isSignedIn()) return;
         
@@ -948,16 +1050,31 @@ class FocusReadApp {
             const result = await this.firebase.syncPin(
                 localPin.hash,
                 localPin.salt,
-                localPin.updatedAt
+                localPin.changedAt || 0
             );
             
-            if (result?.fromCloud && result.hash !== localPin.hash) {
-                this.pin.setPinData(result.hash, result.salt, result.updatedAt || Date.now());
+            if (result?.conflict) {
+                const useCloud = confirm(
+                    'PIN Conflict Detected\n\n' +
+                    'Your local PIN differs from the cloud PIN.\n\n' +
+                    'Click OK to use the CLOUD PIN (from your other devices)\n' +
+                    'Click Cancel to keep your LOCAL PIN (this device)'
+                );
+                
+                if (useCloud) {
+                    this.pin.setPinData(result.cloudHash, result.cloudSalt, result.cloudChangedAt);
+                } else {
+                    const changedAt = Date.now();
+                    this.pin.setPinData(localPin.hash, localPin.salt, changedAt);
+                    await this.firebase.savePinToCloud(localPin.hash, localPin.salt, changedAt);
+                }
+            } else if (result?.fromCloud && result.hash !== localPin.hash) {
+                this.pin.setPinData(result.hash, result.salt, result.changedAt || Date.now());
             }
         } else {
             const cloudPin = await this.firebase.getPinFromCloud();
             if (cloudPin && cloudPin.hash && cloudPin.salt) {
-                this.pin.setPinData(cloudPin.hash, cloudPin.salt, cloudPin.updatedAt || Date.now());
+                this.pin.setPinData(cloudPin.hash, cloudPin.salt, cloudPin.changedAt || Date.now());
             }
         }
     }
@@ -1051,6 +1168,7 @@ class FocusReadApp {
         
         document.getElementById('lock-btn').addEventListener('click', () => this.lock());
         document.getElementById('reload-btn').addEventListener('click', () => this.reloadApp());
+        document.getElementById('change-pin-btn')?.addEventListener('click', () => this.startChangePIN());
         
         document.getElementById('back-to-library').addEventListener('click', () => this.showView('library'));
         
@@ -1099,37 +1217,6 @@ class FocusReadApp {
         }
     }
     
-    showPinScreen(mode) {
-        const pinScreen = document.getElementById('pin-screen');
-        const subtitle = document.getElementById('pin-subtitle');
-        const forgotBtn = document.getElementById('forgot-pin-btn');
-        
-        pinScreen.classList.add('active');
-        document.getElementById('app').classList.remove('active');
-        
-        if (mode === 'setup') {
-            subtitle.textContent = 'Create a 4-digit PIN';
-            forgotBtn.style.display = 'none';
-            this.pin.setMode('setup');
-        } else {
-            subtitle.textContent = 'Enter your PIN to unlock';
-            forgotBtn.style.display = '';
-            this.pin.setMode('unlock');
-        }
-        
-        this.pin.bindEvents(
-            () => this.onPinSuccess(),
-            (error) => this.onPinError(error)
-        );
-    }
-    
-    onPinSuccess() {
-        this.isLocked = false;
-        document.getElementById('pin-screen').classList.remove('active');
-        document.getElementById('app').classList.add('active');
-        this.loadLibrary();
-    }
-    
     onPinError(error) {
         const errorEl = document.getElementById('pin-error');
         errorEl.textContent = error;
@@ -1143,6 +1230,74 @@ class FocusReadApp {
         if (this.rsvp) this.rsvp.stop();
         this.saveReadingPosition();
         this.showPinScreen('unlock');
+    }
+    
+    startChangePIN() {
+        this.toggleSettings(false);
+        this.isChangingPin = true;
+        this.changePinStep = 'verify';
+        this.showPinScreen('verify');
+    }
+    
+    showPinScreen(mode) {
+        const pinScreen = document.getElementById('pin-screen');
+        const subtitle = document.getElementById('pin-subtitle');
+        const forgotBtn = document.getElementById('forgot-pin-btn');
+        
+        pinScreen.classList.add('active');
+        document.getElementById('app').classList.remove('active');
+        
+        if (mode === 'setup') {
+            subtitle.textContent = 'Create a 4-digit PIN';
+            forgotBtn.style.display = 'none';
+            this.pin.setMode('setup');
+        } else if (mode === 'verify' && this.isChangingPin) {
+            subtitle.textContent = 'Enter current PIN';
+            forgotBtn.style.display = 'none';
+            this.pin.setMode('unlock');
+        } else {
+            subtitle.textContent = 'Enter your PIN to unlock';
+            forgotBtn.style.display = '';
+            this.pin.setMode('unlock');
+        }
+        
+        this.pin.bindEvents(
+            () => this.onPinSuccess(),
+            (error) => this.onPinError(error)
+        );
+    }
+    
+    async onPinSuccess() {
+        if (this.isChangingPin) {
+            if (this.changePinStep === 'verify') {
+                this.changePinStep = 'new';
+                document.getElementById('pin-subtitle').textContent = 'Create new PIN';
+                this.pin.setMode('setup');
+                this.pin.bindEvents(
+                    () => this.onPinSuccess(),
+                    (error) => this.onPinError(error)
+                );
+                return;
+            } else if (this.changePinStep === 'new') {
+                this.isChangingPin = false;
+                this.changePinStep = null;
+                
+                const pinData = this.pin.getPinData();
+                if (this.firebase.isSignedIn() && pinData) {
+                    await this.firebase.savePinToCloud(pinData.hash, pinData.salt, pinData.changedAt);
+                }
+                
+                document.getElementById('pin-screen').classList.remove('active');
+                document.getElementById('app').classList.add('active');
+                this.showErrorToast('PIN changed successfully');
+                return;
+            }
+        }
+        
+        this.isLocked = false;
+        document.getElementById('pin-screen').classList.remove('active');
+        document.getElementById('app').classList.add('active');
+        this.loadLibrary();
     }
     
     async reloadApp() {
@@ -1182,37 +1337,54 @@ class FocusReadApp {
     async loadLibrary(options = {}) {
         const { skipAutoOpen = false } = options;
         
-        const books = await this.storage.getAllBooks();
-        const grid = document.getElementById('book-grid');
-        const emptyState = document.getElementById('empty-library');
-        
-        grid.innerHTML = '';
-        
-        if (books.length === 0) {
-            emptyState.style.display = '';
-            grid.style.display = 'none';
-        } else {
-            emptyState.style.display = 'none';
-            grid.style.display = '';
+        try {
+            const books = await this.storage.getAllBooks();
+            const grid = document.getElementById('book-grid');
+            const emptyState = document.getElementById('empty-library');
             
-            books.forEach(book => {
-                const card = this.createBookCard(book);
-                grid.appendChild(card);
-            });
-        }
-        
-        if (skipAutoOpen) return;
-        
-        const lastBook = await this.storage.getLastOpenedBook();
-        if (lastBook && books.length > 0) {
-            const book = books.find(b => b.id === lastBook);
-            if (book) {
-                this.openBook(book);
+            grid.innerHTML = '';
+            
+            if (books.length === 0) {
+                emptyState.style.display = '';
+                grid.style.display = 'none';
+            } else {
+                emptyState.style.display = 'none';
+                grid.style.display = '';
+                
+                books.forEach(book => {
+                    const card = this.createBookCard(book);
+                    grid.appendChild(card);
+                });
+            }
+            
+            if (skipAutoOpen) {
+                this.showViewDirect('library');
                 return;
             }
+            
+            const lastBook = await this.storage.getLastOpenedBook();
+            if (lastBook && books.length > 0) {
+                const book = books.find(b => b.id === lastBook);
+                if (book) {
+                    this.openBook(book);
+                    return;
+                }
+            }
+            
+            this.showViewDirect('library');
+        } catch (error) {
+            console.error('Load library error:', error);
+            this.showErrorToast(`Error loading library: ${error.message}`);
+            this.showViewDirect('library');
         }
-        
-        this.showView('library');
+    }
+    
+    showViewDirect(view) {
+        document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        const viewEl = document.getElementById(`${view}-view`);
+        if (viewEl) {
+            viewEl.classList.add('active');
+        }
     }
     
     createBookCard(book) {
@@ -1245,6 +1417,12 @@ class FocusReadApp {
                         <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
                     </svg>
                     Rename book
+                </button>
+                <button class="book-menu-item" role="menuitem" data-action="reformat" style="${!book.structure || book.structure.length === 0 ? '' : 'display:none'}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 7V4h16v3M9 20h6M12 4v16"/>
+                    </svg>
+                    Reformat text
                 </button>
                 <button class="book-menu-item" role="menuitem" data-action="upload" style="${this.firebase.isSignedIn() && !book.isCloud ? '' : 'display:none'}">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1304,6 +1482,15 @@ class FocusReadApp {
             menu.classList.remove('open');
             this.showRenameModal(book);
         });
+        
+        const reformatBtn = card.querySelector('[data-action="reformat"]');
+        if (reformatBtn) {
+            this.bindTapEvent(reformatBtn, async (e) => {
+                e.stopPropagation();
+                menu.classList.remove('open');
+                await this.reformatBook(book);
+            });
+        }
         
         const uploadBtn = card.querySelector('[data-action="upload"]');
         if (uploadBtn) {
@@ -1401,11 +1588,14 @@ class FocusReadApp {
         
         this.renderText();
         this.showView('reader');
-        this.updateReadingProgress();
         
         await this.storage.setLastOpenedBook(book.id);
         
         this.scrollToPosition();
+        
+        setTimeout(() => {
+            this.updateReadingProgress();
+        }, 100);
         
         if (book.toc && book.toc.length > 0) {
             this.renderTOC(book.toc);
@@ -1533,6 +1723,12 @@ class FocusReadApp {
     
     async saveReadingPosition() {
         if (!this.currentBook) return;
+        
+        try {
+            this.updateReadingProgress();
+        } catch (e) {
+            console.error('Error updating progress:', e);
+        }
         
         this.currentBook.position = this.readingPosition;
         this.currentBook.progressPercent = this.readingPercent || 0;
@@ -1759,8 +1955,12 @@ class FocusReadApp {
     }
     
     showView(view) {
-        this.toggleSearch(false);
-        this.toggleTOC(false);
+        try {
+            this.toggleSearch(false);
+            this.toggleTOC(false);
+        } catch (e) {
+            console.error('Toggle error:', e);
+        }
         
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         
@@ -1782,10 +1982,15 @@ class FocusReadApp {
         
         if (view === 'library') {
             document.getElementById('current-book-title').textContent = 'FocusRead';
-            this.stopKokoroTTS();
+            try {
+                this.stopKokoroTTS();
+            } catch (e) {
+                console.error('Stop TTS error:', e);
+            }
             
             const bookToSave = this.currentBook;
             this.currentBook = null;
+            this.structure = null;
             
             (async () => {
                 try {
@@ -1797,17 +2002,40 @@ class FocusReadApp {
                     }
                 } catch (e) {
                     console.error('Error saving position:', e);
+                    this.showErrorToast('Could not save reading position');
                 }
                 try {
-                    await this.loadLibrary({ skipAutoOpen: true });
+                    const books = await this.storage.getAllBooks();
+                    const grid = document.getElementById('book-grid');
+                    const emptyState = document.getElementById('empty-library');
+                    
+                    grid.innerHTML = '';
+                    
+                    if (books.length === 0) {
+                        emptyState.style.display = '';
+                        grid.style.display = 'none';
+                    } else {
+                        emptyState.style.display = 'none';
+                        grid.style.display = '';
+                        
+                        books.forEach(book => {
+                            const card = this.createBookCard(book);
+                            grid.appendChild(card);
+                        });
+                    }
                 } catch (e) {
                     console.error('Error loading library:', e);
+                    this.showErrorToast(`Error: ${e.message}`);
                 }
             })();
         }
         
         if (view === 'rsvp') {
-            this.stopKokoroTTS();
+            try {
+                this.stopKokoroTTS();
+            } catch (e) {
+                console.error('Stop TTS error:', e);
+            }
         }
     }
     

@@ -21,7 +21,7 @@ let onSyncErrorCallback = null;
 export class FirebaseSync {
     constructor() {
         this.initialized = false;
-        this.syncStatus = 'idle';
+        this.syncStatus = 'pending';
         this.lastSyncTime = null;
         this.lastError = null;
         this.syncProgress = { current: 0, total: 0, action: '' };
@@ -648,8 +648,8 @@ export class FirebaseSync {
         return chunks;
     }
     
-    async syncPin(pinHash, pinSalt, localUpdatedAt) {
-        if (!currentUser || !this.initialized) return { hash: pinHash, salt: pinSalt, fromCloud: false };
+    async syncPin(pinHash, pinSalt, localChangedAt) {
+        if (!currentUser || !this.initialized) return { hash: pinHash, salt: pinSalt, fromCloud: false, conflict: false };
         
         try {
             const { doc, getDoc, setDoc } = this._firestore;
@@ -658,29 +658,51 @@ export class FirebaseSync {
             
             if (pinDoc.exists()) {
                 const cloudData = pinDoc.data();
-                const cloudUpdatedAt = cloudData.updatedAt || 0;
+                const cloudChangedAt = cloudData.changedAt || 0;
                 
-                if (cloudUpdatedAt > localUpdatedAt) {
-                    return {
-                        hash: cloudData.hash,
-                        salt: cloudData.salt,
-                        updatedAt: cloudUpdatedAt,
-                        fromCloud: true
-                    };
+                if (cloudData.hash !== pinHash) {
+                    if (cloudChangedAt > localChangedAt) {
+                        return {
+                            hash: cloudData.hash,
+                            salt: cloudData.salt,
+                            changedAt: cloudChangedAt,
+                            fromCloud: true,
+                            conflict: false
+                        };
+                    } else if (localChangedAt > cloudChangedAt) {
+                        await setDoc(pinRef, {
+                            hash: pinHash,
+                            salt: pinSalt,
+                            changedAt: localChangedAt
+                        });
+                        return { hash: pinHash, salt: pinSalt, fromCloud: false, conflict: false };
+                    } else {
+                        return {
+                            hash: pinHash,
+                            salt: pinSalt,
+                            cloudHash: cloudData.hash,
+                            cloudSalt: cloudData.salt,
+                            cloudChangedAt,
+                            localChangedAt,
+                            fromCloud: false,
+                            conflict: true
+                        };
+                    }
                 }
+                return { hash: pinHash, salt: pinSalt, fromCloud: false, conflict: false };
             }
             
             await setDoc(pinRef, {
                 hash: pinHash,
                 salt: pinSalt,
-                updatedAt: Date.now()
+                changedAt: localChangedAt
             });
             
-            return { hash: pinHash, salt: pinSalt, fromCloud: false };
+            return { hash: pinHash, salt: pinSalt, fromCloud: false, conflict: false };
             
         } catch (error) {
             console.error('Sync PIN error:', error);
-            return { hash: pinHash, salt: pinSalt, fromCloud: false };
+            return { hash: pinHash, salt: pinSalt, fromCloud: false, conflict: false };
         }
     }
     
@@ -697,7 +719,7 @@ export class FirebaseSync {
                 return {
                     hash: data.hash,
                     salt: data.salt,
-                    updatedAt: data.updatedAt || 0
+                    changedAt: data.changedAt || 0
                 };
             }
             
@@ -706,6 +728,26 @@ export class FirebaseSync {
         } catch (error) {
             console.error('Get PIN from cloud error:', error);
             return null;
+        }
+    }
+    
+    async savePinToCloud(pinHash, pinSalt, changedAt) {
+        if (!currentUser || !this.initialized) return false;
+        
+        try {
+            const { doc, setDoc } = this._firestore;
+            const pinRef = doc(db, 'users', currentUser.uid, 'settings', 'pin');
+            
+            await setDoc(pinRef, {
+                hash: pinHash,
+                salt: pinSalt,
+                changedAt: changedAt
+            });
+            
+            return true;
+        } catch (error) {
+            console.error('Save PIN to cloud error:', error);
+            return false;
         }
     }
     
