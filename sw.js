@@ -3,7 +3,7 @@
  * Provides offline support and caching
  */
 
-const CACHE_NAME = 'focusread-v1';
+const CACHE_NAME = 'focusread-v3';
 
 const STATIC_ASSETS = [
     './',
@@ -18,6 +18,8 @@ const STATIC_ASSETS = [
     './js/tts.js',
     './js/settings.js',
     './js/search.js',
+    './js/firebase-config.js',
+    './js/firebase-sync.js',
     './manifest.json'
 ];
 

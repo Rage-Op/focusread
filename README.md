@@ -58,6 +58,14 @@ A web-based PDF reader designed for people with ADHD, featuring bionic reading, 
 - Installable as a Progressive Web App
 - Offline support via Service Worker
 
+### ☁️ Cloud Sync (Optional)
+- Sign in with Google or Email/Password
+- Sync your library across all devices
+- Reading position syncs automatically
+- Settings sync between devices
+- Works fully offline when signed out
+- Requires Firebase setup (see below)
+
 ## Screenshots
 
 ### PIN Lock Screen
@@ -125,6 +133,89 @@ php -S localhost:8000
 ```
 
 Then open `http://localhost:8000` in your browser.
+
+## Cloud Sync Setup (Optional)
+
+Cloud sync is optional. The app works fully offline without it. To enable cloud sync:
+
+### 1. Create a Firebase Project
+
+1. Go to [Firebase Console](https://console.firebase.google.com/)
+2. Click **Add project**
+3. Enter a project name (e.g., "focusread")
+4. Disable Google Analytics (optional, not needed)
+5. Click **Create project**
+
+### 2. Add a Web App
+
+1. In your project, click the **Web** icon (`</>`)
+2. Enter an app nickname (e.g., "FocusRead Web")
+3. Skip Firebase Hosting for now
+4. Click **Register app**
+5. Copy the `firebaseConfig` object — you'll need it later
+
+### 3. Enable Authentication
+
+1. Go to **Build → Authentication**
+2. Click **Get started**
+3. Under **Sign-in method**, enable:
+   - **Google** (click, enable, add your email as support email, save)
+   - **Email/Password** (click, enable, save)
+4. Go to **Settings → Authorized domains**
+5. Add your hosting domain: `yourusername.github.io` (or your custom domain)
+
+### 4. Create Firestore Database
+
+1. Go to **Build → Firestore Database**
+2. Click **Create database**
+3. Choose **Start in production mode**
+4. Select a region close to your users
+5. Click **Enable**
+
+### 5. Set Firestore Security Rules
+
+1. In Firestore, go to **Rules** tab
+2. Replace the rules with the contents of `firestore.rules`:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
+```
+
+3. Click **Publish**
+
+### 6. Add Firebase Config to App
+
+1. Open `js/firebase-config.js`
+2. Replace the empty strings with your Firebase config:
+
+```javascript
+export const firebaseConfig = {
+    apiKey: "AIzaSy...",
+    authDomain: "your-project.firebaseapp.com",
+    projectId: "your-project",
+    storageBucket: "your-project.appspot.com",
+    messagingSenderId: "123456789",
+    appId: "1:123456789:web:abc123"
+};
+```
+
+3. Deploy your site
+
+### Cost
+
+- **Spark plan (free)**: 1GB storage, 50K reads/day, 20K writes/day
+- For personal use, the free tier is usually sufficient
+- Cloud sync uses only Firestore (no Firebase Storage)
 
 ## Keyboard Shortcuts
 
