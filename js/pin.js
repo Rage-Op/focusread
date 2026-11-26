@@ -34,27 +34,54 @@ export class PinManager {
         
         const keys = document.querySelectorAll('.pin-key[data-key]');
         keys.forEach(key => {
-            const handler = () => this.addDigit(key.dataset.key);
-            key.removeEventListener('click', key._handler);
-            key._handler = handler;
-            key.addEventListener('click', handler);
+            this.bindPointerEvents(key, () => this.addDigit(key.dataset.key));
         });
         
         const backspace = document.getElementById('pin-backspace');
-        const backspaceHandler = () => this.removeDigit();
-        backspace.removeEventListener('click', backspace._handler);
-        backspace._handler = backspaceHandler;
-        backspace.addEventListener('click', backspaceHandler);
+        this.bindPointerEvents(backspace, () => this.removeDigit());
         
         const forgotBtn = document.getElementById('forgot-pin-btn');
-        const forgotHandler = () => this.forgotPin();
-        forgotBtn.removeEventListener('click', forgotBtn._handler);
-        forgotBtn._handler = forgotHandler;
-        forgotBtn.addEventListener('click', forgotHandler);
+        this.bindPointerEvents(forgotBtn, () => this.forgotPin());
         
         document.removeEventListener('keydown', this._keyHandler);
         this._keyHandler = (e) => this.handleKeyboard(e);
         document.addEventListener('keydown', this._keyHandler);
+    }
+    
+    bindPointerEvents(element, action) {
+        if (element._pointerBound) return;
+        element._pointerBound = true;
+        
+        let isPointerDown = false;
+        
+        element.addEventListener('pointerdown', (e) => {
+            e.preventDefault();
+            isPointerDown = true;
+            element.classList.add('pressed');
+        }, { passive: false });
+        
+        element.addEventListener('pointerup', (e) => {
+            if (isPointerDown) {
+                e.preventDefault();
+                action();
+            }
+            isPointerDown = false;
+            element.classList.remove('pressed');
+        }, { passive: false });
+        
+        element.addEventListener('pointerleave', () => {
+            isPointerDown = false;
+            element.classList.remove('pressed');
+        });
+        
+        element.addEventListener('pointercancel', () => {
+            isPointerDown = false;
+            element.classList.remove('pressed');
+        });
+        
+        element.addEventListener('touchend', (e) => {
+            e.preventDefault();
+        }, { passive: false });
     }
     
     handleKeyboard(e) {

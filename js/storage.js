@@ -76,6 +76,7 @@ export class StorageManager {
     }
     
     async updateBook(book) {
+        book.updatedAt = book.updatedAt || Date.now();
         return this.saveBook(book);
     }
     

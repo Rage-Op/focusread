@@ -11,6 +11,7 @@ import { RSVPReader } from './rsvp.js';
 import { TTSManager } from './tts.js';
 import { SettingsManager } from './settings.js';
 import { SearchManager } from './search.js';
+import { FirebaseSync } from './firebase-sync.js';
 
 class FocusReadApp {
     constructor() {
@@ -22,12 +23,14 @@ class FocusReadApp {
         this.rsvp = null;
         this.tts = new TTSManager();
         this.search = new SearchManager();
+        this.firebase = new FirebaseSync();
         
         this.currentBook = null;
         this.words = [];
         this.paragraphs = [];
         this.readingPosition = 0;
         this.isLocked = true;
+        this.deleteBookTarget = null;
         
         this.init();
     }
@@ -47,6 +50,234 @@ class FocusReadApp {
                 console.log('Service worker registration failed:', e);
             }
         }
+        
+        await this.initFirebase();
+    }
+    
+    async initFirebase() {
+        if (!this.firebase.isConfigured()) {
+            console.log('Firebase not configured, cloud sync disabled');
+            return;
+        }
+        
+        document.getElementById('cloud-section').style.display = '';
+        
+        const initialized = await this.firebase.init();
+        if (!initialized) return;
+        
+        this.firebase.onAuthChange((user) => {
+            this.updateCloudUI(user);
+            if (user && !this.isLocked) {
+                this.mergeLibraries();
+            }
+        });
+        
+        this.firebase.onSyncStatus((status) => {
+            const indicator = document.getElementById('sync-status');
+            if (indicator) {
+                indicator.setAttribute('data-status', status);
+            }
+        });
+        
+        this.bindCloudEvents();
+    }
+    
+    updateCloudUI(user) {
+        const signedOut = document.getElementById('cloud-signed-out');
+        const signedIn = document.getElementById('cloud-signed-in');
+        const userEmail = document.getElementById('user-email');
+        const deleteCloudBtn = document.getElementById('delete-cloud-btn');
+        
+        if (user) {
+            signedOut.style.display = 'none';
+            signedIn.style.display = '';
+            userEmail.textContent = user.email || user.displayName || 'Signed in';
+            if (deleteCloudBtn) deleteCloudBtn.style.display = '';
+        } else {
+            signedOut.style.display = '';
+            signedIn.style.display = 'none';
+            if (deleteCloudBtn) deleteCloudBtn.style.display = 'none';
+        }
+    }
+    
+    bindCloudEvents() {
+        document.getElementById('sign-in-btn')?.addEventListener('click', () => {
+            this.showSignInModal();
+        });
+        
+        document.getElementById('google-signin-btn')?.addEventListener('click', async () => {
+            try {
+                document.getElementById('signin-error').textContent = '';
+                await this.firebase.signInWithGoogle();
+                this.hideSignInModal();
+            } catch (error) {
+                document.getElementById('signin-error').textContent = error.message;
+            }
+        });
+        
+        document.getElementById('email-signin-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = document.getElementById('signin-email').value;
+            const password = document.getElementById('signin-password').value;
+            
+            try {
+                document.getElementById('signin-error').textContent = '';
+                await this.firebase.signInWithEmail(email, password);
+                this.hideSignInModal();
+            } catch (error) {
+                let message = error.message;
+                if (error.code === 'auth/wrong-password') {
+                    message = 'Incorrect password';
+                } else if (error.code === 'auth/invalid-email') {
+                    message = 'Invalid email address';
+                } else if (error.code === 'auth/weak-password') {
+                    message = 'Password must be at least 6 characters';
+                }
+                document.getElementById('signin-error').textContent = message;
+            }
+        });
+        
+        document.getElementById('close-signin')?.addEventListener('click', () => {
+            this.hideSignInModal();
+        });
+        
+        document.getElementById('sign-out-btn')?.addEventListener('click', async () => {
+            await this.firebase.signOut();
+            this.loadLibrary();
+        });
+        
+        document.getElementById('sync-now-btn')?.addEventListener('click', () => {
+            this.syncNow();
+        });
+        
+        document.getElementById('delete-local-btn')?.addEventListener('click', async () => {
+            if (this.deleteBookTarget) {
+                await this.storage.deleteBook(this.deleteBookTarget.id);
+                this.hideDeleteModal();
+                this.loadLibrary();
+            }
+        });
+        
+        document.getElementById('delete-cloud-btn')?.addEventListener('click', async () => {
+            if (this.deleteBookTarget) {
+                await this.storage.deleteBook(this.deleteBookTarget.id);
+                if (this.firebase.isSignedIn()) {
+                    await this.firebase.deleteBookFromCloud(this.deleteBookTarget.id);
+                }
+                this.hideDeleteModal();
+                this.loadLibrary();
+            }
+        });
+        
+        document.getElementById('cancel-delete-btn')?.addEventListener('click', () => {
+            this.hideDeleteModal();
+        });
+        
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden' && this.currentBook) {
+                this.saveReadingPosition();
+                if (this.firebase.isSignedIn()) {
+                    this.firebase.updateBookProgress(
+                        this.currentBook.id,
+                        this.readingPosition,
+                        this.currentBook.wordCount
+                    );
+                }
+            }
+        });
+    }
+    
+    showSignInModal() {
+        const modal = document.getElementById('signin-modal');
+        modal.classList.add('open');
+        modal.setAttribute('aria-hidden', 'false');
+        document.getElementById('signin-error').textContent = '';
+    }
+    
+    hideSignInModal() {
+        const modal = document.getElementById('signin-modal');
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    
+    showDeleteModal(book) {
+        this.deleteBookTarget = book;
+        const modal = document.getElementById('delete-modal');
+        document.getElementById('delete-book-name').textContent = `"${book.title}"`;
+        
+        const cloudBtn = document.getElementById('delete-cloud-btn');
+        if (cloudBtn) {
+            cloudBtn.style.display = this.firebase.isSignedIn() ? '' : 'none';
+        }
+        
+        modal.classList.add('open');
+        modal.setAttribute('aria-hidden', 'false');
+    }
+    
+    hideDeleteModal() {
+        const modal = document.getElementById('delete-modal');
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+        this.deleteBookTarget = null;
+    }
+    
+    async mergeLibraries() {
+        if (!this.firebase.isSignedIn()) return;
+        
+        const localBooks = await this.storage.getAllBooks();
+        const cloudBooks = await this.firebase.getCloudBooks();
+        
+        const cloudBookIds = new Set(cloudBooks.map(b => b.id));
+        const localBookIds = new Set(localBooks.map(b => b.id));
+        
+        for (const localBook of localBooks) {
+            if (!cloudBookIds.has(localBook.id)) {
+                await this.firebase.uploadBook(localBook);
+            }
+        }
+        
+        for (const cloudBook of cloudBooks) {
+            if (!localBookIds.has(cloudBook.id)) {
+                const fullBook = await this.firebase.downloadBook(cloudBook.id);
+                if (fullBook) {
+                    await this.storage.saveBook(fullBook);
+                }
+            } else {
+                const localBook = localBooks.find(b => b.id === cloudBook.id);
+                const localUpdatedAt = localBook.updatedAt || localBook.createdAt || 0;
+                const cloudUpdatedAt = cloudBook.updatedAt?.toMillis?.() || cloudBook.updatedAt || 0;
+                
+                if (cloudUpdatedAt > localUpdatedAt && cloudBook.position !== undefined) {
+                    localBook.position = cloudBook.position;
+                    await this.storage.updateBook(localBook);
+                }
+            }
+        }
+        
+        const settingsWithTimestamp = { ...this.settings.settings, updatedAt: Date.now() };
+        const syncedSettings = await this.firebase.syncSettings(settingsWithTimestamp);
+        if (syncedSettings !== settingsWithTimestamp) {
+            this.settings.settings = syncedSettings;
+            this.settings.apply();
+            this.settings.updateUI();
+        }
+        
+        this.loadLibrary();
+    }
+    
+    async syncNow() {
+        if (!this.firebase.isSignedIn()) return;
+        
+        if (this.currentBook) {
+            this.saveReadingPosition();
+            await this.firebase.updateBookProgress(
+                this.currentBook.id,
+                this.readingPosition,
+                this.currentBook.wordCount
+            );
+        }
+        
+        await this.mergeLibraries();
     }
     
     bindEvents() {
@@ -91,6 +322,12 @@ class FocusReadApp {
         document.getElementById('toc-overlay').addEventListener('click', () => this.toggleTOC(false));
         
         document.addEventListener('keydown', (e) => this.handleKeyboard(e));
+        
+        document.addEventListener('pointerdown', (e) => {
+            if (!e.target.closest('.book-menu') && !e.target.closest('.book-menu-btn')) {
+                this.closeAllBookMenus();
+            }
+        });
         
         const readerContent = document.getElementById('reader-content');
         readerContent.addEventListener('scroll', () => this.updateReadingProgress());
@@ -191,39 +428,155 @@ class FocusReadApp {
         card.setAttribute('tabindex', '0');
         
         const progress = book.position ? Math.round((book.position / book.wordCount) * 100) : 0;
+        const cloudBadge = book.isCloud ? `
+            <div class="book-cloud-badge" title="Synced to cloud">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+                </svg>
+            </div>
+        ` : '';
         
         card.innerHTML = `
+            <button class="book-menu-btn" aria-label="Book options" aria-expanded="false">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/>
+                </svg>
+            </button>
+            <div class="book-menu" role="menu" aria-hidden="true">
+                <button class="book-menu-item" role="menuitem" data-action="upload" style="${this.firebase.isSignedIn() && !book.isCloud ? '' : 'display:none'}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>
+                        <polyline points="12 12 12 16"/>
+                        <polyline points="9 13 12 10 15 13"/>
+                    </svg>
+                    Upload to cloud
+                </button>
+                <button class="book-menu-item danger" role="menuitem" data-action="delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    Remove book
+                </button>
+            </div>
             <div class="book-cover">📖</div>
             <div class="book-title" title="${book.title}">${book.title}</div>
             <div class="book-progress">${progress}% read</div>
-            <button class="book-delete" aria-label="Remove ${book.title}">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 6 6 18M6 6l12 12"/>
-                </svg>
-            </button>
+            ${cloudBadge}
         `;
         
-        card.addEventListener('click', (e) => {
-            if (!e.target.closest('.book-delete')) {
+        const menuBtn = card.querySelector('.book-menu-btn');
+        const menu = card.querySelector('.book-menu');
+        
+        this.bindTapEvent(card, (e) => {
+            if (!e.target.closest('.book-menu-btn') && !e.target.closest('.book-menu')) {
+                this.closeAllBookMenus();
                 this.openBook(book);
             }
         });
         
         card.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.target.closest('.book-menu-btn') && !e.target.closest('.book-menu')) {
                 this.openBook(book);
             }
         });
         
-        card.querySelector('.book-delete').addEventListener('click', async (e) => {
+        menuBtn.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
-            if (confirm(`Remove "${book.title}" from your library?`)) {
-                await this.storage.deleteBook(book.id);
-                this.loadLibrary();
+        });
+        
+        this.bindTapEvent(menuBtn, (e) => {
+            e.stopPropagation();
+            const isOpen = menu.classList.contains('open');
+            this.closeAllBookMenus();
+            if (!isOpen) {
+                menu.classList.add('open');
+                menuBtn.setAttribute('aria-expanded', 'true');
+                menu.setAttribute('aria-hidden', 'false');
+            }
+        });
+        
+        const uploadBtn = card.querySelector('[data-action="upload"]');
+        if (uploadBtn) {
+            this.bindTapEvent(uploadBtn, async (e) => {
+                e.stopPropagation();
+                menu.classList.remove('open');
+                
+                const fullBook = await this.storage.getBook(book.id);
+                if (fullBook) {
+                    const success = await this.firebase.uploadBook(fullBook);
+                    if (success) {
+                        fullBook.isCloud = true;
+                        await this.storage.updateBook(fullBook);
+                        this.loadLibrary();
+                    }
+                }
+            });
+        }
+        
+        const deleteBtn = card.querySelector('[data-action="delete"]');
+        this.bindTapEvent(deleteBtn, async (e) => {
+            e.stopPropagation();
+            menu.classList.remove('open');
+            
+            if (this.firebase.isSignedIn()) {
+                this.showDeleteModal(book);
+            } else {
+                if (confirm(`Remove "${book.title}" from your library?\n\nThis cannot be undone.`)) {
+                    await this.storage.deleteBook(book.id);
+                    this.loadLibrary();
+                }
             }
         });
         
         return card;
+    }
+    
+    bindTapEvent(element, handler) {
+        let startTime = 0;
+        let startX = 0;
+        let startY = 0;
+        let pointerDown = false;
+        
+        element.addEventListener('pointerdown', (e) => {
+            pointerDown = true;
+            startTime = Date.now();
+            startX = e.clientX;
+            startY = e.clientY;
+            element.classList.add('pressed');
+        });
+        
+        element.addEventListener('pointerup', (e) => {
+            element.classList.remove('pressed');
+            if (!pointerDown) return;
+            pointerDown = false;
+            
+            const elapsed = Date.now() - startTime;
+            const dx = Math.abs(e.clientX - startX);
+            const dy = Math.abs(e.clientY - startY);
+            
+            if (elapsed < 500 && dx < 20 && dy < 20) {
+                handler(e);
+            }
+        });
+        
+        element.addEventListener('pointerleave', () => {
+            pointerDown = false;
+            element.classList.remove('pressed');
+        });
+        
+        element.addEventListener('pointercancel', () => {
+            pointerDown = false;
+            element.classList.remove('pressed');
+        });
+    }
+    
+    closeAllBookMenus() {
+        document.querySelectorAll('.book-menu.open').forEach(menu => {
+            menu.classList.remove('open');
+            menu.setAttribute('aria-hidden', 'true');
+            const btn = menu.previousElementSibling;
+            if (btn) btn.setAttribute('aria-expanded', 'false');
+        });
     }
     
     async openBook(book) {
@@ -325,7 +678,16 @@ class FocusReadApp {
         if (!this.currentBook) return;
         
         this.currentBook.position = this.readingPosition;
+        this.currentBook.updatedAt = Date.now();
         await this.storage.updateBook(this.currentBook);
+        
+        if (this.firebase.isSignedIn()) {
+            this.firebase.updateBookProgress(
+                this.currentBook.id,
+                this.readingPosition,
+                this.currentBook.wordCount
+            );
+        }
     }
     
     updateFocusRuler(e) {
@@ -554,6 +916,10 @@ class FocusReadApp {
             navItem.classList.add('active');
             navItem.setAttribute('aria-current', 'page');
         }
+        
+        if (view === 'library') {
+            document.getElementById('current-book-title').textContent = 'FocusRead';
+        }
     }
     
     toggleSidebar(show) {
@@ -623,10 +989,21 @@ class FocusReadApp {
                 toc: result.toc,
                 pageBreaks: result.pageBreaks,
                 position: 0,
-                createdAt: Date.now()
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                isCloud: false
             };
             
             await this.storage.saveBook(book);
+            
+            if (this.firebase.isSignedIn()) {
+                document.getElementById('import-status').textContent = 'Uploading to cloud...';
+                const uploaded = await this.firebase.uploadBook(book);
+                if (uploaded) {
+                    book.isCloud = true;
+                    await this.storage.updateBook(book);
+                }
+            }
             
             modal.classList.remove('open');
             
