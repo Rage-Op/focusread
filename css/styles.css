@@ -1052,6 +1052,19 @@ body {
     letter-spacing: 0.05em;
 }
 
+.settings-note {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-bottom: var(--spacing-sm);
+    line-height: 1.5;
+}
+
+.settings-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: var(--spacing-xs);
+}
+
 .theme-options, .align-options {
     display: flex;
     gap: var(--spacing-sm);
@@ -1497,6 +1510,342 @@ input[type="range"] {
 
 #search-input {
     font-size: 16px;
+}
+
+/* ============================================
+   TTS PLAYBACK BAR & SPEAKER BUTTONS
+   ============================================ */
+
+/* Speaker button on paragraphs */
+.paragraph-wrapper {
+    position: relative;
+    display: flex;
+    gap: var(--spacing-sm);
+    align-items: flex-start;
+}
+
+.paragraph-speaker {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.6;
+    transition: all var(--transition-fast);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    margin-top: 0.1em;
+}
+
+.paragraph-speaker:hover,
+.paragraph-speaker:active {
+    opacity: 1;
+    background: var(--accent);
+    color: white;
+}
+
+.paragraph-speaker svg {
+    width: 16px;
+    height: 16px;
+}
+
+.paragraph-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.paragraph-text.reading {
+    background: rgba(74, 144, 217, 0.15);
+    border-radius: 4px;
+    padding: 2px 4px;
+    margin: -2px -4px;
+}
+
+.paragraph-text .sentence-highlight {
+    background: rgba(74, 144, 217, 0.3);
+    border-radius: 2px;
+}
+
+/* TTS Playback Bar */
+.tts-playback-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-primary);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 20px var(--shadow);
+    z-index: 150;
+    transform: translateY(100%);
+    transition: transform var(--transition-normal);
+    padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+.tts-playback-bar.visible {
+    transform: translateY(0);
+}
+
+.tts-playback-content {
+    padding: var(--spacing-sm) var(--spacing-md);
+    max-width: 600px;
+    margin: 0 auto;
+}
+
+.tts-controls-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-xs);
+}
+
+.tts-control-btn {
+    width: 44px;
+    height: 44px;
+    border: none;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.tts-control-btn:hover,
+.tts-control-btn:active {
+    background: var(--bg-tertiary);
+}
+
+.tts-control-btn svg {
+    width: 24px;
+    height: 24px;
+}
+
+.tts-play-btn {
+    width: 56px;
+    height: 56px;
+    background: var(--accent);
+    color: white;
+}
+
+.tts-play-btn:hover,
+.tts-play-btn:active {
+    background: var(--accent-hover);
+}
+
+.tts-play-btn svg {
+    width: 28px;
+    height: 28px;
+}
+
+.tts-time {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    min-width: 80px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.tts-seek-row {
+    margin-bottom: var(--spacing-xs);
+}
+
+.tts-seek-bar {
+    width: 100%;
+    height: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.tts-seek-bar::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 20px;
+    height: 20px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.tts-seek-bar::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: var(--accent);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+.tts-options-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    flex-wrap: wrap;
+}
+
+.tts-speed-control,
+.tts-voice-control {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: 0.8rem;
+}
+
+.tts-speed-control label,
+.tts-voice-control label {
+    color: var(--text-muted);
+}
+
+.tts-speed-control select,
+.tts-voice-control select {
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+    cursor: pointer;
+    min-height: 36px;
+}
+
+.tts-voice-control select {
+    max-width: 140px;
+}
+
+.tts-engine-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: var(--bg-secondary);
+    border-radius: 12px;
+}
+
+.tts-engine-indicator .engine-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+}
+
+.tts-engine-indicator[data-engine="system"] .engine-dot {
+    background: var(--warning);
+}
+
+.tts-close-btn {
+    width: 36px;
+    height: 36px;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    touch-action: manipulation;
+}
+
+.tts-close-btn:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.tts-close-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* Loading overlay */
+.tts-loading-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--bg-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+}
+
+.tts-loading-content {
+    text-align: center;
+    padding: var(--spacing-md);
+}
+
+.tts-loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--bg-tertiary);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto var(--spacing-sm);
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+#tts-loading-text {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    display: block;
+    margin-bottom: var(--spacing-sm);
+}
+
+.tts-loading-progress {
+    width: 200px;
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0 auto;
+}
+
+.tts-loading-bar {
+    height: 100%;
+    background: var(--accent);
+    width: 0%;
+    transition: width var(--transition-fast);
+}
+
+/* Adjust reader content when playback bar is visible */
+body.tts-active .reader-content {
+    padding-bottom: 180px;
+}
+
+body.tts-active .back-btn {
+    bottom: 180px;
+}
+
+/* Mobile adjustments */
+@media (max-width: 480px) {
+    .tts-options-row {
+        justify-content: center;
+    }
+    
+    .tts-voice-control select {
+        max-width: 100px;
+    }
+    
+    .tts-engine-indicator {
+        display: none;
+    }
 }
 
 /* ============================================
