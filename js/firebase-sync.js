@@ -15,12 +15,16 @@ let currentUser = null;
 let syncDebounceTimer = null;
 let onAuthChangeCallback = null;
 let onSyncStatusCallback = null;
+let onSyncProgressCallback = null;
+let onSyncErrorCallback = null;
 
 export class FirebaseSync {
     constructor() {
         this.initialized = false;
         this.syncStatus = 'idle';
         this.lastSyncTime = null;
+        this.lastError = null;
+        this.syncProgress = { current: 0, total: 0, action: '' };
     }
     
     isConfigured() {
@@ -132,9 +136,31 @@ export class FirebaseSync {
         onSyncStatusCallback = callback;
     }
     
+    onSyncProgress(callback) {
+        onSyncProgressCallback = callback;
+    }
+    
+    onSyncError(callback) {
+        onSyncErrorCallback = callback;
+    }
+    
     setSyncStatus(status) {
         this.syncStatus = status;
-        onSyncStatusCallback?.(status);
+        if (status === 'idle') {
+            this.lastSyncTime = Date.now();
+            this.lastError = null;
+        }
+        onSyncStatusCallback?.(status, this.lastSyncTime);
+    }
+    
+    setSyncProgress(current, total, action) {
+        this.syncProgress = { current, total, action };
+        onSyncProgressCallback?.(current, total, action);
+    }
+    
+    setSyncError(error) {
+        this.lastError = error;
+        onSyncErrorCallback?.(error);
     }
     
     isSignedIn() {
@@ -179,9 +205,18 @@ export class FirebaseSync {
             const result = await this._auth.signInWithEmailAndPassword(auth, email, password);
             return result.user;
         } catch (error) {
-            if (error.code === 'auth/user-not-found') {
-                const result = await this._auth.createUserWithEmailAndPassword(auth, email, password);
-                return result.user;
+            if (error.code === 'auth/user-not-found' || 
+                error.code === 'auth/invalid-credential' ||
+                error.code === 'auth/wrong-password') {
+                try {
+                    const result = await this._auth.createUserWithEmailAndPassword(auth, email, password);
+                    return result.user;
+                } catch (createError) {
+                    if (createError.code === 'auth/email-already-in-use') {
+                        throw new Error('Incorrect password for this email');
+                    }
+                    throw createError;
+                }
             }
             throw error;
         }
@@ -253,11 +288,15 @@ export class FirebaseSync {
         if (!currentUser || !this.initialized) return false;
         
         this.setSyncStatus('syncing');
+        this.setSyncProgress(0, 100, `Uploading "${book.title}"...`);
         
         try {
             const { doc, setDoc, collection, writeBatch, serverTimestamp } = this._firestore;
             
             const bookRef = doc(db, 'users', currentUser.uid, 'books', book.id);
+            
+            const textContent = book.paragraphs.join('\n\n');
+            const chunks = this.splitIntoChunks(textContent, CHUNK_SIZE);
             
             const bookMeta = {
                 title: book.title,
@@ -267,14 +306,11 @@ export class FirebaseSync {
                 tocLength: book.toc?.length || 0,
                 createdAt: book.createdAt || Date.now(),
                 updatedAt: serverTimestamp(),
-                chunkCount: 0
+                chunkCount: chunks.length
             };
             
-            const textContent = book.paragraphs.join('\n\n');
-            const chunks = this.splitIntoChunks(textContent, CHUNK_SIZE);
-            bookMeta.chunkCount = chunks.length;
-            
             await setDoc(bookRef, bookMeta);
+            this.setSyncProgress(10, 100, `Uploading "${book.title}"...`);
             
             const tocJson = JSON.stringify(book.toc || []);
             const pageBreaksJson = JSON.stringify(book.pageBreaks || {});
@@ -285,6 +321,7 @@ export class FirebaseSync {
             await setDoc(doc(db, 'users', currentUser.uid, 'books', book.id, 'meta', 'pageBreaks'), {
                 data: pageBreaksJson
             });
+            this.setSyncProgress(20, 100, `Uploading "${book.title}"...`);
             
             for (let i = 0; i < chunks.length; i++) {
                 const chunkRef = doc(db, 'users', currentUser.uid, 'books', book.id, 'chunks', `chunk_${i.toString().padStart(4, '0')}`);
@@ -292,6 +329,8 @@ export class FirebaseSync {
                     index: i,
                     text: chunks[i]
                 });
+                const progress = 20 + Math.round((i + 1) / chunks.length * 80);
+                this.setSyncProgress(progress, 100, `Uploading "${book.title}" (${i + 1}/${chunks.length} chunks)...`);
             }
             
             this.setSyncStatus('idle');
@@ -299,15 +338,17 @@ export class FirebaseSync {
             
         } catch (error) {
             console.error('Upload book error:', error);
+            this.setSyncError(`Failed to upload "${book.title}": ${error.message}`);
             this.setSyncStatus('error');
             return false;
         }
     }
     
-    async downloadBook(bookId) {
+    async downloadBook(bookId, bookTitle = 'book') {
         if (!currentUser || !this.initialized) return null;
         
         this.setSyncStatus('syncing');
+        this.setSyncProgress(0, 100, `Downloading "${bookTitle}"...`);
         
         try {
             const { doc, getDoc, collection, query, getDocs } = this._firestore;
@@ -316,11 +357,13 @@ export class FirebaseSync {
             const bookDoc = await getDoc(bookRef);
             
             if (!bookDoc.exists()) {
+                this.setSyncError(`Book not found in cloud`);
                 this.setSyncStatus('error');
                 return null;
             }
             
             const bookMeta = bookDoc.data();
+            this.setSyncProgress(20, 100, `Downloading "${bookMeta.title}"...`);
             
             let toc = [];
             let pageBreaks = {};
@@ -338,6 +381,7 @@ export class FirebaseSync {
             } catch (e) {
                 console.log('Could not load book metadata:', e);
             }
+            this.setSyncProgress(30, 100, `Downloading "${bookMeta.title}"...`);
             
             const chunksRef = collection(db, 'users', currentUser.uid, 'books', bookId, 'chunks');
             const chunksSnapshot = await getDocs(query(chunksRef));
@@ -345,6 +389,8 @@ export class FirebaseSync {
             const chunks = chunksSnapshot.docs
                 .map(doc => ({ index: doc.data().index, text: doc.data().text }))
                 .sort((a, b) => a.index - b.index);
+            
+            this.setSyncProgress(90, 100, `Processing "${bookMeta.title}"...`);
             
             const fullText = chunks.map(c => c.text).join('');
             const paragraphs = fullText.split('\n\n').filter(p => p.trim());
@@ -366,6 +412,7 @@ export class FirebaseSync {
             
         } catch (error) {
             console.error('Download book error:', error);
+            this.setSyncError(`Failed to download: ${error.message}`);
             this.setSyncStatus('error');
             return null;
         }

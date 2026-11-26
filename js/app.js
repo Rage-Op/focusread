@@ -72,6 +72,7 @@ class FocusReadApp {
         this.kokoroTTS.onParagraphChange = (index) => {
             this.highlightReadingParagraph(index);
             this.scrollToParagraphSmooth(index);
+            this.updateTTSPositionInfo(index);
         };
         
         this.kokoroTTS.onSentenceChange = (index, text) => {
@@ -82,27 +83,34 @@ class FocusReadApp {
             this.updateTTSTime(elapsed, total);
         };
         
-        this.kokoroTTS.onLoadProgress = (percent, message) => {
+        this.kokoroTTS.onLoadProgress = (percent, message, loadedMB) => {
             const overlay = document.getElementById('tts-loading-overlay');
             const bar = document.getElementById('tts-loading-bar');
             const text = document.getElementById('tts-loading-text');
+            const sizeText = document.getElementById('tts-loading-size');
+            const percentText = document.getElementById('tts-loading-percent');
             
             if (percent < 100) {
                 overlay.style.display = '';
                 bar.style.width = `${percent}%`;
                 text.textContent = message;
+                if (sizeText) sizeText.textContent = loadedMB > 0 ? `${loadedMB} MB / ~80 MB` : '';
+                if (percentText) percentText.textContent = `${percent}%`;
             } else {
                 overlay.style.display = 'none';
+                this.updateTTSModelStatus();
             }
         };
         
         this.kokoroTTS.onEngineChange = (engine) => {
             this.updateTTSEngineIndicator(engine);
             this.populateTTSVoices();
+            this.updateTTSModelStatus();
         };
         
         this.bindTTSControls();
         this.populateTTSVoices();
+        this.updateTTSModelStatus();
     }
     
     bindTTSControls() {
@@ -145,6 +153,13 @@ class FocusReadApp {
         });
         
         speedSelect.value = this.kokoroTTS.speed;
+        
+        document.getElementById('delete-tts-model')?.addEventListener('click', async () => {
+            if (confirm('Delete the downloaded Kokoro voice model?\n\nIt will be re-downloaded the next time you use TTS (~80 MB).')) {
+                await this.kokoroTTS.deleteModelCache();
+                this.updateTTSModelStatus();
+            }
+        });
     }
     
     populateTTSVoices() {
@@ -198,14 +213,105 @@ class FocusReadApp {
     }
     
     updateTTSEngineIndicator(engine) {
-        const indicator = document.getElementById('tts-engine-indicator');
-        const nameEl = indicator?.querySelector('.engine-name');
+        const badge = document.getElementById('tts-engine-badge');
+        const labelEl = badge?.querySelector('.engine-label');
+        const detailEl = document.getElementById('tts-engine-detail');
         
-        if (indicator) {
-            indicator.setAttribute('data-engine', engine);
+        if (badge) {
+            badge.setAttribute('data-engine', engine);
         }
-        if (nameEl) {
-            nameEl.textContent = engine === 'kokoro' ? 'Kokoro' : 'System';
+        
+        if (labelEl) {
+            labelEl.textContent = engine === 'kokoro' ? 'Kokoro-82M' : 'System Voice';
+        }
+        
+        if (detailEl) {
+            if (engine === 'kokoro') {
+                const backend = this.kokoroTTS.backend || 'WASM';
+                detailEl.textContent = `Neural • ${backend.toUpperCase()}`;
+            } else {
+                detailEl.textContent = 'Device built-in';
+            }
+        }
+    }
+    
+    updateTTSPositionInfo(paragraphIndex) {
+        const positionEl = document.getElementById('tts-para-position');
+        const timeLeftEl = document.getElementById('tts-time-remaining');
+        
+        if (positionEl) {
+            const total = this.paragraphs.length;
+            positionEl.textContent = `Paragraph ${paragraphIndex + 1} of ${total}`;
+        }
+        
+        if (timeLeftEl && this.words.length > 0) {
+            let wordsFromPara = 0;
+            for (let i = 0; i < paragraphIndex; i++) {
+                wordsFromPara += this.paragraphs[i].split(/\s+/).filter(w => w).length;
+            }
+            const wordsLeft = this.words.length - wordsFromPara;
+            const speed = this.kokoroTTS.speed || 1;
+            const wpm = 150 * speed;
+            const minutesLeft = Math.ceil(wordsLeft / wpm);
+            timeLeftEl.textContent = `~${minutesLeft} min left`;
+        }
+    }
+    
+    async updateTTSModelStatus() {
+        const statusText = document.getElementById('tts-model-status-text');
+        const sizeRow = document.getElementById('tts-model-size-row');
+        const sizeText = document.getElementById('tts-model-size-text');
+        const backendRow = document.getElementById('tts-model-backend-row');
+        const backendText = document.getElementById('tts-model-backend-text');
+        const deleteBtn = document.getElementById('delete-tts-model');
+        const fallbackInfo = document.getElementById('tts-fallback-info');
+        const fallbackReason = document.getElementById('tts-fallback-reason');
+        
+        const cacheInfo = await this.kokoroTTS.checkModelCached();
+        const modelInfo = this.kokoroTTS.getModelInfo();
+        
+        if (statusText) {
+            if (modelInfo.isLoaded) {
+                statusText.textContent = 'Loaded and ready';
+                statusText.className = 'model-status-value cached';
+            } else if (cacheInfo.cached) {
+                statusText.textContent = 'Cached, works offline';
+                statusText.className = 'model-status-value cached';
+            } else {
+                statusText.textContent = 'Not downloaded';
+                statusText.className = 'model-status-value not-cached';
+            }
+        }
+        
+        if (sizeRow && sizeText) {
+            if (cacheInfo.cached && cacheInfo.sizeMB > 0) {
+                sizeRow.style.display = '';
+                sizeText.textContent = `${cacheInfo.sizeMB} MB`;
+            } else {
+                sizeRow.style.display = 'none';
+            }
+        }
+        
+        if (backendRow && backendText) {
+            if (modelInfo.isLoaded) {
+                backendRow.style.display = '';
+                backendText.textContent = modelInfo.backend.toUpperCase();
+            } else {
+                backendRow.style.display = 'none';
+            }
+        }
+        
+        if (deleteBtn) {
+            deleteBtn.style.display = cacheInfo.cached ? '' : 'none';
+        }
+        
+        if (fallbackInfo && fallbackReason) {
+            if (modelInfo.fallbackReason && modelInfo.engine === 'system') {
+                fallbackInfo.style.display = '';
+                fallbackReason.textContent = modelInfo.fallbackReason;
+            } else {
+                fallbackInfo.style.display = 'none';
+            }
         }
     }
     
@@ -285,11 +391,16 @@ class FocusReadApp {
             }
         });
         
-        this.firebase.onSyncStatus((status) => {
-            const indicator = document.getElementById('sync-status');
-            if (indicator) {
-                indicator.setAttribute('data-status', status);
-            }
+        this.firebase.onSyncStatus((status, lastSyncTime) => {
+            this.updateSyncStatusUI(status, lastSyncTime);
+        });
+        
+        this.firebase.onSyncProgress((current, total, action) => {
+            this.updateSyncProgressUI(current, total, action);
+        });
+        
+        this.firebase.onSyncError((error) => {
+            this.updateSyncErrorUI(error);
         });
         
         this.bindCloudEvents();
@@ -299,18 +410,111 @@ class FocusReadApp {
         const signedOut = document.getElementById('cloud-signed-out');
         const signedIn = document.getElementById('cloud-signed-in');
         const userEmail = document.getElementById('user-email');
+        const userName = document.getElementById('user-name');
+        const avatar = document.getElementById('cloud-avatar');
         const deleteCloudBtn = document.getElementById('delete-cloud-btn');
         
         if (user) {
             signedOut.style.display = 'none';
             signedIn.style.display = '';
-            userEmail.textContent = user.email || user.displayName || 'Signed in';
+            userEmail.textContent = user.email || 'Signed in';
+            if (userName) {
+                userName.textContent = user.displayName || '';
+            }
+            
+            if (avatar && user.photoURL) {
+                avatar.innerHTML = `<img src="${user.photoURL}" alt="Avatar">`;
+            }
+            
             if (deleteCloudBtn) deleteCloudBtn.style.display = '';
         } else {
             signedOut.style.display = '';
             signedIn.style.display = 'none';
             if (deleteCloudBtn) deleteCloudBtn.style.display = 'none';
         }
+    }
+    
+    updateSyncStatusUI(status, lastSyncTime) {
+        const statusText = document.getElementById('sync-status-text');
+        const dot = statusText?.querySelector('.sync-dot');
+        const text = statusText?.querySelector('span:last-child');
+        const lastTimeEl = document.getElementById('sync-last-time');
+        const progressRow = document.getElementById('sync-progress-row');
+        const errorRow = document.getElementById('sync-error-row');
+        
+        if (dot) {
+            dot.setAttribute('data-status', status);
+        }
+        
+        if (text) {
+            switch (status) {
+                case 'syncing':
+                    text.textContent = 'Syncing...';
+                    break;
+                case 'error':
+                    text.textContent = 'Sync error';
+                    break;
+                default:
+                    text.textContent = 'Synced';
+            }
+        }
+        
+        if (lastTimeEl && lastSyncTime) {
+            lastTimeEl.textContent = this.formatLastSyncTime(lastSyncTime);
+        }
+        
+        if (status === 'idle' && progressRow) {
+            progressRow.style.display = 'none';
+        }
+        
+        if (status !== 'error' && errorRow) {
+            errorRow.style.display = 'none';
+        }
+    }
+    
+    updateSyncProgressUI(current, total, action) {
+        const progressRow = document.getElementById('sync-progress-row');
+        const progressFill = document.getElementById('sync-progress-fill');
+        const progressText = document.getElementById('sync-progress-text');
+        
+        if (progressRow) {
+            progressRow.style.display = '';
+        }
+        
+        if (progressFill) {
+            progressFill.style.width = `${(current / total) * 100}%`;
+        }
+        
+        if (progressText) {
+            progressText.textContent = action;
+        }
+    }
+    
+    updateSyncErrorUI(error) {
+        const errorRow = document.getElementById('sync-error-row');
+        const errorText = document.getElementById('sync-error-text');
+        
+        if (errorRow && error) {
+            errorRow.style.display = '';
+        }
+        
+        if (errorText) {
+            errorText.textContent = error;
+        }
+    }
+    
+    formatLastSyncTime(timestamp) {
+        if (!timestamp) return 'Never';
+        
+        const now = Date.now();
+        const diff = now - timestamp;
+        
+        if (diff < 60000) return 'Just now';
+        if (diff < 3600000) return `${Math.floor(diff / 60000)} min ago`;
+        if (diff < 86400000) return `${Math.floor(diff / 3600000)} hr ago`;
+        
+        const date = new Date(timestamp);
+        return date.toLocaleDateString();
     }
     
     bindCloudEvents() {
@@ -405,6 +609,10 @@ class FocusReadApp {
         modal.classList.add('open');
         modal.setAttribute('aria-hidden', 'false');
         document.getElementById('signin-error').textContent = '';
+        
+        setTimeout(() => {
+            document.getElementById('signin-email')?.focus();
+        }, 100);
     }
     
     hideSignInModal() {
@@ -451,7 +659,7 @@ class FocusReadApp {
         
         for (const cloudBook of cloudBooks) {
             if (!localBookIds.has(cloudBook.id)) {
-                const fullBook = await this.firebase.downloadBook(cloudBook.id);
+                const fullBook = await this.firebase.downloadBook(cloudBook.id, cloudBook.title);
                 if (fullBook) {
                     await this.storage.saveBook(fullBook);
                 }
@@ -934,10 +1142,17 @@ class FocusReadApp {
         
         const wordsRead = Math.round((percent / 100) * this.words.length);
         const wordsLeft = this.words.length - wordsRead;
-        const wpm = 200;
-        const minutesLeft = Math.ceil(wordsLeft / wpm);
         
-        document.getElementById('time-left').textContent = `${minutesLeft} min left`;
+        const ttsSpeed = this.kokoroTTS?.speed || 1;
+        const baseWpm = this.kokoroTTS?.isPlaying ? 150 * ttsSpeed : 200;
+        const minutesLeft = Math.ceil(wordsLeft / baseWpm);
+        
+        const timeLeftEl = document.getElementById('time-left');
+        if (this.kokoroTTS?.isPlaying) {
+            timeLeftEl.textContent = `~${minutesLeft} min left (listening)`;
+        } else {
+            timeLeftEl.textContent = `${minutesLeft} min left`;
+        }
         
         this.readingPosition = wordsRead;
     }
@@ -1303,6 +1518,8 @@ class FocusReadApp {
             this.toggleSettings(false);
             this.toggleSearch(false);
             this.toggleTOC(false);
+            this.hideSignInModal();
+            this.hideDeleteModal();
             
             if (this.rsvp && this.rsvp.isActive) {
                 this.rsvp.stop();
@@ -1311,6 +1528,10 @@ class FocusReadApp {
         }
         
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+        
+        const signinModal = document.getElementById('signin-modal');
+        const deleteModal = document.getElementById('delete-modal');
+        if (signinModal?.classList.contains('open') || deleteModal?.classList.contains('open')) return;
         
         if (e.key === ' ' && this.rsvp && document.getElementById('rsvp-view').classList.contains('active')) {
             e.preventDefault();

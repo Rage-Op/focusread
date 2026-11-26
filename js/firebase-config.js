@@ -13,12 +13,12 @@
  */
 
 export const firebaseConfig = {
-    apiKey: "",
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: ""
+    apiKey: "AIzaSyALI2wgpb3CaaaDdyVilqu564OF8FtEm7c",
+    authDomain: "focusread-bd639.firebaseapp.com",
+    projectId: "focusread-bd639",
+    storageBucket: "focusread-bd639.firebasestorage.app",
+    messagingSenderId: "778186617269",
+    appId: "1:778186617269:web:2e4cc1a3a0510c70db69fc"
 };
 
 /**

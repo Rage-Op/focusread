@@ -18,16 +18,21 @@ const KOKORO_VOICES = [
 const MODEL_CACHE_NAME = 'focusread-kokoro-model-v1';
 const DEFAULT_VOICE = 'af_heart';
 const SENTENCE_BUFFER_SIZE = 2;
+const MODEL_SIZE_MB = 80;
 
 export class KokoroTTS {
     constructor() {
         this.kokoro = null;
         this.worker = null;
         this.isModelLoaded = false;
+        this.isModelCached = false;
         this.isLoading = false;
         this.loadProgress = 0;
+        this.loadedMB = 0;
         this.useSystemVoices = false;
         this.forceSystemVoices = false;
+        this.backend = 'wasm';
+        this.fallbackReason = null;
         
         this.currentVoice = DEFAULT_VOICE;
         this.speed = 1.0;
@@ -121,12 +126,13 @@ export class KokoroTTS {
         const canUseKokoro = await this.checkDeviceCapability();
         if (!canUseKokoro) {
             this.useSystemVoices = true;
+            this.fallbackReason = 'Device does not support Kokoro (low memory or no WebGPU/WASM)';
             this.onEngineChange?.('system');
             return true;
         }
         
         this.isLoading = true;
-        this.onLoadProgress?.(0, 'Initializing...');
+        this.onLoadProgress?.(0, 'Initializing...', 0);
         
         try {
             const importPromise = import('https://cdn.jsdelivr.net/npm/kokoro-js@1.1.0/+esm');
@@ -137,7 +143,7 @@ export class KokoroTTS {
             
             const { KokoroTTS: KokoroModel } = module;
             
-            this.onLoadProgress?.(10, 'Loading model...');
+            this.onLoadProgress?.(10, 'Loading model...', 0);
             
             const modelPromise = KokoroModel.from_pretrained(
                 'onnx-community/Kokoro-82M-v1.0-ONNX',
@@ -146,8 +152,10 @@ export class KokoroTTS {
                     device: 'wasm',
                     progress_callback: (progress) => {
                         const percent = Math.round(10 + progress.progress * 0.85);
+                        const loadedMB = Math.round((progress.progress / 100) * MODEL_SIZE_MB);
                         this.loadProgress = percent;
-                        this.onLoadProgress?.(percent, 'Downloading model...');
+                        this.loadedMB = loadedMB;
+                        this.onLoadProgress?.(percent, 'Downloading model...', loadedMB);
                         onProgress?.(percent);
                     }
                 }
@@ -158,32 +166,44 @@ export class KokoroTTS {
             
             if (!this.kokoro) throw new Error('Model load timeout');
             
-            this.onLoadProgress?.(98, 'Warming up...');
+            this.backend = 'wasm';
+            this.onLoadProgress?.(98, 'Warming up...', MODEL_SIZE_MB);
             
             const warmupPromise = this.kokoro.generate('Hi', { voice: DEFAULT_VOICE });
-            const warmupTimeout = this.timeoutPromise(30000, 'Warmup timeout');
+            const warmupTimeout = this.timeoutPromise(15000, 'Warmup timeout');
             
             try {
                 await Promise.race([warmupPromise, warmupTimeout]);
+                
+                this.isModelLoaded = true;
+                this.isModelCached = true;
+                this.isLoading = false;
+                this.useSystemVoices = false;
+                this.fallbackReason = null;
+                this.onLoadProgress?.(100, 'Ready', MODEL_SIZE_MB);
+                this.onEngineChange?.('kokoro');
+                
+                return true;
             } catch (warmupError) {
-                console.warn('Warmup failed, but continuing:', warmupError);
+                console.warn('Warmup failed, falling back to system voices:', warmupError);
+                this.isLoading = false;
+                this.kokoro = null;
+                this.isModelCached = true;
+                this.useSystemVoices = true;
+                this.fallbackReason = 'Model warmup failed (device may be too slow). Using system voices.';
+                this.onEngineChange?.('system');
+                this.onLoadProgress?.(100, 'Using system voices', 0);
+                return true;
             }
-            
-            this.isModelLoaded = true;
-            this.isLoading = false;
-            this.useSystemVoices = false;
-            this.onLoadProgress?.(100, 'Ready');
-            this.onEngineChange?.('kokoro');
-            
-            return true;
             
         } catch (error) {
             console.error('Failed to load Kokoro model:', error);
             this.isLoading = false;
             this.kokoro = null;
             this.useSystemVoices = true;
+            this.fallbackReason = `Model failed to load: ${error.message}`;
             this.onEngineChange?.('system');
-            this.onLoadProgress?.(100, 'Using system voices');
+            this.onLoadProgress?.(100, 'Using system voices', 0);
             return true;
         }
     }
@@ -192,6 +212,78 @@ export class KokoroTTS {
         return new Promise((_, reject) => {
             setTimeout(() => reject(new Error(message)), ms);
         });
+    }
+    
+    async checkModelCached() {
+        if (!('caches' in window)) return { cached: false, size: 0 };
+        
+        try {
+            const cacheNames = await caches.keys();
+            const modelCaches = cacheNames.filter(name => 
+                name.includes('transformers') || name.includes('onnx')
+            );
+            
+            let totalSize = 0;
+            for (const cacheName of modelCaches) {
+                const cache = await caches.open(cacheName);
+                const keys = await cache.keys();
+                for (const request of keys) {
+                    const response = await cache.match(request);
+                    if (response) {
+                        const blob = await response.clone().blob();
+                        totalSize += blob.size;
+                    }
+                }
+            }
+            
+            const cached = totalSize > 10 * 1024 * 1024;
+            this.isModelCached = cached;
+            
+            return {
+                cached,
+                size: totalSize,
+                sizeMB: Math.round(totalSize / (1024 * 1024))
+            };
+        } catch (e) {
+            console.error('Error checking model cache:', e);
+            return { cached: false, size: 0 };
+        }
+    }
+    
+    async deleteModelCache() {
+        if (!('caches' in window)) return false;
+        
+        try {
+            const cacheNames = await caches.keys();
+            const modelCaches = cacheNames.filter(name => 
+                name.includes('transformers') || name.includes('onnx')
+            );
+            
+            for (const cacheName of modelCaches) {
+                await caches.delete(cacheName);
+            }
+            
+            this.isModelLoaded = false;
+            this.isModelCached = false;
+            this.kokoro = null;
+            
+            return true;
+        } catch (e) {
+            console.error('Error deleting model cache:', e);
+            return false;
+        }
+    }
+    
+    getModelInfo() {
+        return {
+            isLoaded: this.isModelLoaded,
+            isCached: this.isModelCached,
+            isLoading: this.isLoading,
+            backend: this.backend,
+            engine: this.useSystemVoices ? 'system' : 'kokoro',
+            fallbackReason: this.fallbackReason,
+            modelSizeMB: MODEL_SIZE_MB
+        };
     }
     
     splitIntoSentences(text) {
