@@ -3,7 +3,7 @@
  * Provides offline support and caching
  */
 
-const CACHE_NAME = 'focusread-v4';
+const CACHE_NAME = 'focusread-v5';
 
 const STATIC_ASSETS = [
     './',

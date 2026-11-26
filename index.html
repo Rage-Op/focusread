@@ -132,15 +132,48 @@
                     </button>
                 </div>
                 <div id="cloud-signed-in" class="cloud-status" style="display:none">
-                    <div class="user-info">
-                        <span id="user-email" class="user-email"></span>
-                        <span id="sync-status" class="sync-indicator" data-status="idle">
-                            <span class="sync-dot"></span>
-                            <span class="sync-text">Synced</span>
-                        </span>
+                    <div class="cloud-account-info">
+                        <div class="cloud-avatar" id="cloud-avatar">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+                            </svg>
+                        </div>
+                        <div class="cloud-account-details">
+                            <span id="user-email" class="user-email"></span>
+                            <span id="user-name" class="user-name"></span>
+                        </div>
                     </div>
+                    
+                    <div class="sync-status-panel" id="sync-status-panel">
+                        <div class="sync-status-row">
+                            <span class="sync-status-label">Status:</span>
+                            <span id="sync-status-text" class="sync-status-value">
+                                <span class="sync-dot" data-status="idle"></span>
+                                <span>Synced</span>
+                            </span>
+                        </div>
+                        <div class="sync-status-row" id="sync-last-row">
+                            <span class="sync-status-label">Last sync:</span>
+                            <span id="sync-last-time" class="sync-status-value">Never</span>
+                        </div>
+                        <div class="sync-status-row sync-progress-row" id="sync-progress-row" style="display:none">
+                            <div class="sync-progress-bar">
+                                <div id="sync-progress-fill" class="sync-progress-fill"></div>
+                            </div>
+                            <span id="sync-progress-text" class="sync-progress-text">Uploading...</span>
+                        </div>
+                        <div class="sync-status-row sync-error-row" id="sync-error-row" style="display:none">
+                            <span id="sync-error-text" class="sync-error-text"></span>
+                        </div>
+                    </div>
+                    
                     <div class="cloud-actions">
-                        <button id="sync-now-btn" class="secondary-btn">Sync Now</button>
+                        <button id="sync-now-btn" class="secondary-btn">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                            Sync Now
+                        </button>
                         <button id="sign-out-btn" class="secondary-btn">Sign Out</button>
                     </div>
                 </div>
@@ -432,13 +465,56 @@
                 <!-- Text-to-Speech -->
                 <div class="settings-section">
                     <h3>Text-to-Speech</h3>
-                    <p class="settings-note">Use speaker buttons on paragraphs to start reading aloud with high-quality Kokoro AI voices (loads ~80MB model on first use).</p>
+                    
+                    <div class="tts-info-card">
+                        <div class="tts-info-header">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="tts-info-icon">
+                                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+                            </svg>
+                            <span>About the Voice Model</span>
+                        </div>
+                        <p class="tts-info-text">
+                            <strong>Kokoro-82M</strong> is an open-source neural text-to-speech model. 
+                            It runs <em>fully on your device</em> — no audio data is sent anywhere. 
+                            The model downloads once (~80MB) and is cached for offline use.
+                        </p>
+                    </div>
+                    
+                    <div class="tts-model-status" id="tts-model-status">
+                        <div class="model-status-row">
+                            <span class="model-status-label">Model status:</span>
+                            <span class="model-status-value" id="tts-model-status-text">Not downloaded</span>
+                        </div>
+                        <div class="model-status-row" id="tts-model-size-row" style="display:none">
+                            <span class="model-status-label">Cached size:</span>
+                            <span class="model-status-value" id="tts-model-size-text">—</span>
+                        </div>
+                        <div class="model-status-row" id="tts-model-backend-row" style="display:none">
+                            <span class="model-status-label">Backend:</span>
+                            <span class="model-status-value" id="tts-model-backend-text">—</span>
+                        </div>
+                        <button id="delete-tts-model" class="secondary-btn danger-btn" style="display:none">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                            </svg>
+                            Delete downloaded model
+                        </button>
+                    </div>
+                    
                     <label class="toggle-label">
                         <input type="checkbox" id="tts-force-system">
                         <span class="toggle-switch"></span>
                         Use system voices only
                     </label>
-                    <p class="settings-hint">Enable if Kokoro voices don't work on your device</p>
+                    <p class="settings-hint">Enable if Kokoro voices don't work on your device, or to save storage space</p>
+                    
+                    <div class="tts-fallback-info" id="tts-fallback-info" style="display:none">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                        </svg>
+                        <span id="tts-fallback-reason">Using system voices</span>
+                    </div>
                 </div>
 
                 <!-- Accessibility -->
@@ -543,6 +619,22 @@
         <!-- TTS Playback Bar -->
         <div id="tts-playback-bar" class="tts-playback-bar" aria-hidden="true">
             <div class="tts-playback-content">
+                <!-- Status Row -->
+                <div class="tts-status-row">
+                    <div class="tts-position-info">
+                        <span id="tts-para-position">Paragraph 1 of 1</span>
+                        <span class="tts-separator">•</span>
+                        <span id="tts-time-remaining">— min left</span>
+                    </div>
+                    <div class="tts-engine-info" id="tts-engine-info">
+                        <span class="engine-badge" id="tts-engine-badge">
+                            <span class="engine-dot"></span>
+                            <span class="engine-label">Kokoro-82M</span>
+                        </span>
+                        <span class="engine-detail" id="tts-engine-detail">Neural • WASM</span>
+                    </div>
+                </div>
+                
                 <div class="tts-controls-row">
                     <button id="tts-prev" class="tts-control-btn" aria-label="Previous paragraph">
                         <svg viewBox="0 0 24 24" fill="currentColor">
@@ -588,10 +680,6 @@
                         <label for="tts-voice-select">Voice:</label>
                         <select id="tts-voice-select" aria-label="Voice selection"></select>
                     </div>
-                    <div class="tts-engine-indicator" id="tts-engine-indicator">
-                        <span class="engine-dot"></span>
-                        <span class="engine-name">Kokoro</span>
-                    </div>
                     <button id="tts-close" class="tts-close-btn" aria-label="Close player">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M18 6 6 18M6 6l12 12"/>
@@ -602,10 +690,14 @@
             <div id="tts-loading-overlay" class="tts-loading-overlay" style="display:none">
                 <div class="tts-loading-content">
                     <div class="tts-loading-spinner"></div>
-                    <span id="tts-loading-text">Loading voice model...</span>
+                    <div class="tts-loading-status">
+                        <span id="tts-loading-text">Loading voice model...</span>
+                        <span id="tts-loading-size" class="tts-loading-detail"></span>
+                    </div>
                     <div class="tts-loading-progress">
                         <div id="tts-loading-bar" class="tts-loading-bar"></div>
                     </div>
+                    <span id="tts-loading-percent" class="tts-loading-percent">0%</span>
                 </div>
             </div>
         </div>
