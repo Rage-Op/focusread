@@ -3,7 +3,7 @@
  * Provides offline support and caching
  */
 
-const CACHE_NAME = 'focusread-v3';
+const CACHE_NAME = 'focusread-v4';
 
 const STATIC_ASSETS = [
     './',
@@ -16,12 +16,16 @@ const STATIC_ASSETS = [
     './js/bionic.js',
     './js/rsvp.js',
     './js/tts.js',
+    './js/kokoro-tts.js',
     './js/settings.js',
     './js/search.js',
     './js/firebase-config.js',
     './js/firebase-sync.js',
     './manifest.json'
 ];
+
+// Note: Kokoro model (~80MB) is NOT precached here.
+// It's cached dynamically by the browser when first loaded via kokoro-js.
 
 const EXTERNAL_ASSETS = [
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
@@ -39,7 +43,12 @@ self.addEventListener('install', (event) => {
             ]);
         })
     );
-    self.skipWaiting();
+});
+
+self.addEventListener('message', (event) => {
+    if (event.data?.type === 'SKIP_WAITING') {
+        self.skipWaiting();
+    }
 });
 
 self.addEventListener('activate', (event) => {
